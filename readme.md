@@ -2,6 +2,10 @@
 
 This is a small CLI tool intended for periodic integrity verification for large FLAC collections. Processes one batch per invocation, logs only problems, exits. Designed for unattended scheduling via cron or macOS `launchd` but it can also operate as an interactive utility for initial integration into archival workflows.
 
+If you're a serious digital music collector you will invariably have to deal with files that become corrupted over time. Even if your backup system is effective (on-site and in the cloud) you will still end up in a silent war against bitrot, and if you don't know a file needs to be replaced, you may end up with corrupted backups as well.
+
+To make effective use of this tool you'll want to scan your entire collection, root out corruption, and then setup periodic scans to catch corruption soon after it occurs. The initial scan will probably be painful; you may end up with hundreds of files to recover one way or another, which is why this tool also provides lists and reports to help you get started. Read on for more details.
+
 ## Prerequisites
 
 - Node.js 22+
