@@ -1,0 +1,8 @@
+directories:
+  - /Volumes/Music-Main/Library
+  - /Volumes/Music-Backup/Archive
+
+batch_size: 1000
+parallelism: 2
+rescan_interval_days: 90
+fix: false # Fix issues where possible (ID3 tag stripping)
