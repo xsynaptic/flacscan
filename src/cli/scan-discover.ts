@@ -26,6 +26,7 @@ export async function runDiscovery(
 	config: FlacScanConfig,
 ): Promise<DiscoveryStats> {
 	const spinner = ora({
+		discardStdin: false,
 		text: `Discovery: processing 0/${String(files.length)} files`,
 	}).start();
 

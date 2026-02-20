@@ -54,6 +54,7 @@ export const recheckCommand = defineCommand({
 				}
 
 				const spinner = ora({
+					discardStdin: false,
 					text: `Rechecking: 0/${String(items.length)} files`,
 				}).start();
 

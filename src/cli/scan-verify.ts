@@ -41,6 +41,7 @@ export async function runVerification(
 	}
 
 	const spinner = ora({
+		discardStdin: false,
 		text: `Verifying: 0/${String(filesToVerify.length)} files`,
 	}).start();
 

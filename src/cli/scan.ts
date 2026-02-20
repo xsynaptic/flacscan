@@ -54,7 +54,7 @@ export const scanCommand = defineCommand({
 
 			try {
 				// File walk
-				const walkSpinner = ora({ text: 'Scanning directories...' }).start();
+				const walkSpinner = ora({ discardStdin: false, text: 'Scanning directories...' }).start();
 				const { files, mountCheck } = await discoverFlacFiles(config.directories);
 				walkSpinner.succeed(
 					`Found ${String(files.length)} FLAC files across ${String(mountCheck.available.length)} path(s)`,
