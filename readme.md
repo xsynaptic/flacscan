@@ -1,6 +1,6 @@
 # flacscan
 
-Periodic integrity verification for large FLAC collections. Processes one batch per invocation, logs only problems, exits. Designed for unattended scheduling via cron or macOS `launchd`, but it's flexible enough to do a full scan on large collections to initialize the database.
+This is a small CLI tool intended for periodic integrity verification for large FLAC collections. Processes one batch per invocation, logs only problems, exits. Designed for unattended scheduling via cron or macOS `launchd` but it can also operate as an interactive utility for initial integration into archival workflows.
 
 ## Prerequisites
 
@@ -14,15 +14,6 @@ Periodic integrity verification for large FLAC collections. Processes one batch 
 npm install -g flacscan
 ```
 
-Or run from source:
-
-```sh
-git clone https://github.com/xysnaptic/flacscan.git
-cd flacscan
-pnpm install
-pnpm dev scan --directory /path/to/music
-```
-
 ## Config
 
 Copy `flacscan.config.example.yaml` to `~/.flacscan/flacscan.config.yaml` and edit. All settings can be overridden via CLI flags.
@@ -30,6 +21,7 @@ Copy `flacscan.config.example.yaml` to `~/.flacscan/flacscan.config.yaml` and ed
 ## Commands
 
 ```sh
+flacscan                             # same as flacscan scan
 flacscan scan                        # run one verification batch
 flacscan recheck                     # re-verify all known bad files, prune deleted entries
 flacscan status                      # collection health overview
@@ -38,7 +30,7 @@ flacscan list                        # file paths to stdout for scripting
 flacscan list critical               # filter: critical, recoverable, unknown, unreadable
 ```
 
-### scan flags
+### Scan flags
 
 | Flag                 | Default                            |
 | -------------------- | ---------------------------------- |
@@ -51,7 +43,7 @@ flacscan list critical               # filter: critical, recoverable, unknown, u
 | `--log-path <path>`  | `~/.flacscan/flacscan.log`         |
 | `--config <path>`    | `~/.flacscan/flacscan.config.yaml` |
 
-`--fix` strips non-standard ID3 tags (via `id3v2 --delete-all`) when they cause verification failures. If the file passes after stripping, it's marked healthy.
+`--fix` strips non-standard ID3 tags (via `id3v2 --delete-all`) when they cause verification failures. If the file passes after stripping, it's marked healthy. Invalid ID3 tags may end up attached to media improperly converted from other formats.
 
 ### Exit codes
 
@@ -63,10 +55,10 @@ flacscan list critical               # filter: critical, recoverable, unknown, u
 
 ## How it works
 
-Each `flacscan scan` invocation:
+Each `flacscan` invocation:
 
-1. Walks configured directories, skipping unmounted/unavailable paths
-2. **Discovery** — stats every `.flac` file, caches mtime + size in SQLite. Unchanged files (same mtime and size) are skipped
+1. Walks configured directories, skipping unmounted/unavailable paths; this is so you can include external drives without needing to concern yourself about whether they're connected at the time of the scan
+2. **Discovery** — stats every `.flac` file, caches modified time and size in SQLite; unchanged files are skipped
 3. **Verification** — selects a batch of files due for verification (never-verified first, then oldest-first) and runs `flac -t` on each at `nice -n 19` priority
 4. Logs corruption, unreadable files, and ID3 issues to an append-only log file
 
@@ -91,18 +83,8 @@ Corruption severity is classified by parsing `flac -t` stderr:
 
 - **Path-keyed database** — files are tracked by their full path. Renames or moves are treated as a new file + a stale entry. `recheck` prunes stale entries when the old path no longer exists.
 - **Batch model** — designed for low, predictable resource usage rather than scanning everything at once. A single run touches at most `batch_size` files.
-- **No metadata extraction** — discovery only checks mtime/size via `stat`, not FLAC headers. This keeps discovery fast but means the tool can't detect files that were silently corrupted without a mtime change (e.g., bit rot on a filesystem that doesn't update mtime). The periodic rescan interval mitigates this.
+- **No metadata extraction** — discovery only checks mtime/size via `stat`, not FLAC headers. This keeps discovery fast but means the tool can't detect files that were silently corrupted without a mtime change (_e.g._, bitrot on a filesystem that doesn't update mtime). The periodic rescan interval mitigates this.
 - **Graceful shutdown** — Ctrl+C finishes in-flight workers before exiting. A second Ctrl+C force-quits.
-
-## Development
-
-```sh
-pnpm dev scan --directory ./samples
-pnpm build
-pnpm test
-pnpm check-types
-pnpm lint
-```
 
 ## License
 
