@@ -27,12 +27,13 @@ interface VerificationStats {
 export async function runVerification(
 	db: Database.Database,
 	config: FlacScanConfig,
+	directories: string[],
 ): Promise<null | VerificationStats> {
 	const filesToVerify = getFilesNeedingVerification(
 		db,
 		config.rescan_interval_days,
 		config.batch_size,
-		config.directories,
+		directories,
 	);
 
 	if (filesToVerify.length === 0) {

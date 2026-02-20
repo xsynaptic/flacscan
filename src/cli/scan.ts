@@ -1,4 +1,3 @@
-import chalk from 'chalk';
 import { defineCommand } from 'citty';
 import ora from 'ora';
 
@@ -67,14 +66,6 @@ export const scanCommand = defineCommand({
 					mountCheck.skipped,
 				);
 
-				if (mountCheck.skipped.length > 0) {
-					console.log(
-						chalk.dim(
-							`Skipped ${String(mountCheck.skipped.length)} unavailable path(s): ${mountCheck.skipped.join(', ')}`,
-						),
-					);
-				}
-
 				// Discovery phase
 				await runDiscovery(db, files, config);
 
@@ -83,7 +74,7 @@ export const scanCommand = defineCommand({
 				}
 
 				// Verification phase
-				const verificationStats = await runVerification(db, config);
+				const verificationStats = await runVerification(db, config, mountCheck.available);
 
 				logScanComplete(config.log_path, {
 					corrupt: verificationStats?.corrupt ?? 0,

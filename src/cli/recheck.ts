@@ -15,6 +15,7 @@ import {
 	updateVerificationResult,
 	upsertUnreadableFile,
 } from '../database/queries.js';
+import { checkMountedPaths } from '../flac/discovery.js';
 import { ensureBinary } from '../flac/shell.js';
 import { verifyFile } from '../flac/verify.js';
 import { FlacScanError } from './errors.js';
@@ -43,10 +44,16 @@ export const recheckCommand = defineCommand({
 			const db = openDatabase(config.db_path);
 
 			try {
-				const items: RecheckItem[] = [
+				const mountCheck = checkMountedPaths(config.directories);
+
+				const allItems: RecheckItem[] = [
 					...getCorruptFiles(db).map((row): RecheckItem => ({ row, source: 'files' })),
 					...getAllUnreadableFiles(db).map((row): RecheckItem => ({ row, source: 'unreadable' })),
 				];
+
+				const items = allItems.filter((item) =>
+					mountCheck.available.some((dir) => item.row.current_path.startsWith(dir)),
+				);
 
 				if (items.length === 0) {
 					console.log('No files to recheck.');
