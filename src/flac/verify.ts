@@ -7,6 +7,10 @@ export async function verifyFile(filePath: string): Promise<VerificationResult> 
 		await execFile('nice', ['-n', '19', 'flac', '-ts', filePath]);
 		return { status: 'healthy' };
 	} catch (error: unknown) {
+		if (error instanceof Error && 'signal' in error && error.signal) {
+			return { status: 'interrupted' };
+		}
+
 		const errorOutput = extractStderr(error);
 		return {
 			errorOutput,

@@ -79,9 +79,13 @@ export const recheckCommand = defineCommand({
 						}
 						stats.pruned++;
 						spinner.clear();
-						console.log(chalk.green(`  PRUNED ${filePath}`));
+						console.log(chalk.blue(`  PRUNED ${filePath}`));
 					} else if (item.source === 'files') {
 						const result = await verifyFile(filePath);
+
+						if (result.status === 'interrupted') {
+							return;
+						}
 
 						if (result.status === 'healthy') {
 							updateVerificationResult(db, filePath, { last_result: 'healthy' });
@@ -100,6 +104,10 @@ export const recheckCommand = defineCommand({
 						}
 					} else {
 						const result = await verifyFile(filePath);
+
+						if (result.status === 'interrupted') {
+							return;
+						}
 
 						if (result.status === 'healthy') {
 							deleteUnreadableByPath(db, filePath);

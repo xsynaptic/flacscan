@@ -7,4 +7,5 @@ export type VerificationResult =
 			severity: ErrorSeverity;
 			status: 'corrupt';
 	  }
-	| { status: 'healthy' };
+	| { status: 'healthy' }
+	| { status: 'interrupted' };

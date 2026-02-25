@@ -58,6 +58,10 @@ export async function runVerification(
 		try {
 			const result = await verifyFile(file.current_path);
 
+			if (result.status === 'interrupted') {
+				return;
+			}
+
 			if (result.status === 'healthy') {
 				updateVerificationResult(db, file.current_path, { last_result: 'healthy' });
 				stats.healthy++;
@@ -120,6 +124,10 @@ export async function runVerification(
 				stats.exitCode = 1;
 			}
 		} catch (error) {
+			if (isShuttingDown()) {
+				return;
+			}
+
 			updateVerificationResult(db, file.current_path, {
 				error_output: String(error),
 				error_severity: 'unknown',
