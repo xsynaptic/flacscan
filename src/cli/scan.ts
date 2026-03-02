@@ -79,8 +79,9 @@ export const scanCommand = defineCommand({
 				logScanComplete(config.log_path, {
 					corrupt: verificationStats?.corrupt ?? 0,
 					healthy: verificationStats?.healthy ?? 0,
+					pruned: verificationStats?.pruned ?? 0,
 					total: verificationStats
-						? verificationStats.healthy + verificationStats.corrupt + verificationStats.id3Fixed
+						? verificationStats.healthy + verificationStats.corrupt + verificationStats.id3Fixed + verificationStats.pruned
 						: 0,
 				});
 

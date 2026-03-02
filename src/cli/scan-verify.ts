@@ -7,6 +7,7 @@ import ora from 'ora';
 import type { FlacScanConfig } from '../config/types.js';
 
 import {
+	deleteFileByPath,
 	getFilesNeedingVerification,
 	updateVerificationResult,
 	upsertFile,
@@ -22,6 +23,7 @@ interface VerificationStats {
 	exitCode: number;
 	healthy: number;
 	id3Fixed: number;
+	pruned: number;
 }
 
 export async function runVerification(
@@ -51,10 +53,21 @@ export async function runVerification(
 		exitCode: 0,
 		healthy: 0,
 		id3Fixed: 0,
+		pruned: 0,
 	};
 	let verified = 0;
 
 	await processPool(filesToVerify, config.parallelism, async (file) => {
+		if (!fs.existsSync(file.current_path)) {
+			deleteFileByPath(db, file.current_path);
+			stats.pruned++;
+			spinner.clear();
+			console.log(chalk.blue(`  PRUNED ${file.current_path}`));
+			verified++;
+			spinner.text = `Verifying: ${String(verified)}/${String(filesToVerify.length)} files`;
+			return;
+		}
+
 		try {
 			const result = await verifyFile(file.current_path);
 
@@ -141,16 +154,17 @@ export async function runVerification(
 		spinner.text = `Verifying: ${String(verified)}/${String(filesToVerify.length)} files`;
 	});
 
-	const verifiedTotal = stats.healthy + stats.corrupt + stats.id3Fixed;
+	const verifiedTotal = stats.healthy + stats.corrupt + stats.id3Fixed + stats.pruned;
 	const id3Summary = stats.id3Fixed > 0 ? `, ${String(stats.id3Fixed)} ID3 fixed` : '';
+	const prunedSummary = stats.pruned > 0 ? `, ${String(stats.pruned)} pruned` : '';
 
 	if (isShuttingDown()) {
 		spinner.warn(
-			`Verification interrupted: ${String(verifiedTotal)}/${String(filesToVerify.length)} files. ${String(stats.healthy)} healthy, ${String(stats.corrupt)} corrupt${id3Summary}.`,
+			`Verification interrupted: ${String(verifiedTotal)}/${String(filesToVerify.length)} files. ${String(stats.healthy)} healthy, ${String(stats.corrupt)} corrupt${id3Summary}${prunedSummary}.`,
 		);
 	} else {
 		spinner.succeed(
-			`Verified ${String(filesToVerify.length)} files. ${String(stats.healthy)} healthy, ${String(stats.corrupt)} corrupt${id3Summary}.`,
+			`Verified ${String(filesToVerify.length)} files. ${String(stats.healthy)} healthy, ${String(stats.corrupt)} corrupt${id3Summary}${prunedSummary}.`,
 		);
 	}
 

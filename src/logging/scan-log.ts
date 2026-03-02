@@ -47,7 +47,7 @@ export function logId3FixFailed(logPath: string, filePath: string, error: string
 
 export function logScanComplete(
 	logPath: string,
-	stats: { corrupt: number; healthy: number; total: number },
+	stats: { corrupt: number; healthy: number; pruned: number; total: number },
 ) {
 	appendEntry(logPath, {
 		event: 'scan_complete',
