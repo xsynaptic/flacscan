@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-import type { ErrorSeverity } from '../flac/types.js';
+import type { ErrorSeverity } from '../verifiers/types.js';
 
 export function logCorruption(
 	logPath: string,
@@ -18,28 +18,28 @@ export function logCorruption(
 	});
 }
 
-export function logId3Detected(logPath: string, filePath: string) {
+export function logFixApplied(logPath: string, filePath: string, label: string) {
 	appendEntry(logPath, {
-		details: 'Non-standard ID3 tags found, use --fix to strip',
-		event: 'id3_detected',
-		level: 'warn',
-		path: filePath,
-	});
-}
-
-export function logId3Fixed(logPath: string, filePath: string) {
-	appendEntry(logPath, {
-		details: 'Stripped ID3 tags',
-		event: 'id3_fixed',
+		details: `Stripped ${label} tags`,
+		event: `${label.toLowerCase()}_fixed`,
 		level: 'info',
 		path: filePath,
 	});
 }
 
-export function logId3FixFailed(logPath: string, filePath: string, error: string) {
+export function logFixDetected(logPath: string, filePath: string, label: string) {
+	appendEntry(logPath, {
+		details: `Non-standard ${label} tags found, use --fix to strip`,
+		event: `${label.toLowerCase()}_detected`,
+		level: 'warn',
+		path: filePath,
+	});
+}
+
+export function logFixFailed(logPath: string, filePath: string, label: string, error: string) {
 	appendEntry(logPath, {
 		error,
-		event: 'id3_fix_failed',
+		event: `${label.toLowerCase()}_fix_failed`,
 		level: 'error',
 		path: filePath,
 	});

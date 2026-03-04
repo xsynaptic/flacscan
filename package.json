@@ -1,6 +1,6 @@
 {
 	"name": "flacscan",
-	"version": "1.0.1",
+	"version": "1.1.0",
 	"description": "Periodic integrity verification for large FLAC collections",
 	"type": "module",
 	"bin": {

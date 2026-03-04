@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { extractStderr } from '../../src/flac/shell.js';
+import { extractStderr } from '../src/shell.js';
 
 describe('extractStderr', () => {
 	it('extracts from zx-style error with stderr property', () => {

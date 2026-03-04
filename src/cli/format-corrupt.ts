@@ -1,6 +1,6 @@
 import chalk from 'chalk';
 
-import type { ErrorSeverity } from '../flac/types.js';
+import type { ErrorSeverity } from '../verifiers/types.js';
 
 const ERROR_CODE_PATTERN = /error code \d+:(\S+)/;
 

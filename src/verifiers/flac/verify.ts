@@ -1,8 +1,9 @@
-import type { ErrorSeverity, VerificationResult } from './types.js';
+import type { ErrorSeverity, FormatVerifier, VerificationResult } from '../types.js';
 
-import { execFile, extractStderr } from './shell.js';
+import { execFile, extractStderr } from '../../shell.js';
+import { hasId3Tags, stripId3Tags } from './fix-id3.js';
 
-export async function verifyFile(filePath: string): Promise<VerificationResult> {
+async function verifyFile(filePath: string): Promise<VerificationResult> {
 	try {
 		await execFile('nice', ['-n', '19', 'flac', '-ts', filePath]);
 		return { status: 'healthy' };
@@ -58,3 +59,15 @@ export function extractErrorTimestamp(stderr: string): null | string {
 	if (!match?.[1]) return null;
 	return `sample ${match[1]}`;
 }
+
+export const flacVerifier: FormatVerifier = {
+	extensions: ['.flac'],
+	fixer: {
+		detect: hasId3Tags,
+		fix: stripId3Tags,
+		label: 'ID3',
+		requiredBinaries: [{ hint: 'brew install id3v2', name: 'id3v2' }],
+	},
+	requiredBinaries: [{ name: 'flac' }],
+	verify: verifyFile,
+};

@@ -1,7 +1,7 @@
 import { execFile as execFileCb } from 'node:child_process';
 import { promisify } from 'node:util';
 
-import { FlacScanError } from '../cli/errors.js';
+import { FlacScanError } from './cli/errors.js';
 
 export const execFile = promisify(execFileCb);
 

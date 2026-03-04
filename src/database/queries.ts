@@ -1,6 +1,6 @@
 import type Database from 'better-sqlite3';
 
-import type { ErrorSeverity } from '../flac/types.js';
+import type { ErrorSeverity } from '../verifiers/types.js';
 import type { FileRow, FileStatus, UnreadableFileRow } from './types.js';
 
 export function deleteFileByPath(database: Database.Database, currentPath: string) {

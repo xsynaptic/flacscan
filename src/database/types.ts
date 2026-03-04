@@ -1,4 +1,4 @@
-import type { ErrorSeverity } from '../flac/types.js';
+import type { ErrorSeverity } from '../verifiers/types.js';
 
 export interface FileRow {
 	current_path: string;

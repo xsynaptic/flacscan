@@ -4,7 +4,7 @@ import { defineCommand } from 'citty';
 import { loadConfig } from '../config/loader.js';
 import { openDatabase } from '../database/connection.js';
 import { getStats } from '../database/queries.js';
-import { checkMountedPaths } from '../flac/discovery.js';
+import { checkMountedPaths } from '../discovery.js';
 import { FlacScanError } from './errors.js';
 import { sharedArguments } from './shared-arguments.js';
 

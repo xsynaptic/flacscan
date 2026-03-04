@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { classifyError, extractErrorTimestamp } from '../../src/flac/verify.js';
+import { classifyError, extractErrorTimestamp } from '../../../src/verifiers/flac/verify.js';
 
 describe('classifyError', () => {
 	it('returns critical for OUT_OF_BOUNDS', () => {

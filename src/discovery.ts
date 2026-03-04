@@ -22,20 +22,24 @@ export function checkMountedPaths(directories: string[]): MountCheckResult {
 	return { available, skipped };
 }
 
-export async function discoverFlacFiles(
+export async function discoverFiles(
 	directories: string[],
+	extensions: string[],
 ): Promise<{ files: string[]; mountCheck: MountCheckResult }> {
 	const mountCheck = checkMountedPaths(directories);
 	const results = await Promise.all(
 		mountCheck.available.map(async (directory) => {
 			const entries = await fs.promises.readdir(directory, { recursive: true });
-			const flacs: string[] = [];
+			const matched: string[] = [];
 			for (const entry of entries) {
-				if (typeof entry === 'string' && entry.toLowerCase().endsWith('.flac')) {
-					flacs.push(path.join(directory, entry));
+				if (
+					typeof entry === 'string' &&
+					extensions.some((ext) => entry.toLowerCase().endsWith(ext))
+				) {
+					matched.push(path.join(directory, entry));
 				}
 			}
-			return flacs;
+			return matched;
 		}),
 	);
 	const files = results.flat();

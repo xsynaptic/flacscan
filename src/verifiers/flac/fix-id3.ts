@@ -1,4 +1,4 @@
-import { execFile, extractStderr } from './shell.js';
+import { execFile, extractStderr } from '../../shell.js';
 
 const ID3_PATTERN = /ID3v\d tag found|looks like an ID3v1 tag/i;
 

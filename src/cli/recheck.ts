@@ -15,9 +15,9 @@ import {
 	updateVerificationResult,
 	upsertUnreadableFile,
 } from '../database/queries.js';
-import { checkMountedPaths } from '../flac/discovery.js';
-import { ensureBinary } from '../flac/shell.js';
-import { verifyFile } from '../flac/verify.js';
+import { checkMountedPaths } from '../discovery.js';
+import { ensureBinary } from '../shell.js';
+import { flacVerifier } from '../verifiers/flac/verify.js';
 import { FlacScanError } from './errors.js';
 import { printCorruptFile } from './format-corrupt.js';
 import { installShutdownHandler, isShuttingDown, processPool } from './process-pool.js';
@@ -39,7 +39,9 @@ export const recheckCommand = defineCommand({
 		try {
 			installShutdownHandler();
 			const config = loadConfig(args);
-			await ensureBinary('flac');
+			for (const bin of flacVerifier.requiredBinaries) {
+				await ensureBinary(bin.name, bin.hint);
+			}
 
 			const db = openDatabase(config.db_path);
 
@@ -81,7 +83,7 @@ export const recheckCommand = defineCommand({
 						spinner.clear();
 						console.log(chalk.blue(`  PRUNED ${filePath}`));
 					} else if (item.source === 'files') {
-						const result = await verifyFile(filePath);
+						const result = await flacVerifier.verify(filePath);
 
 						if (result.status === 'interrupted') {
 							return;
@@ -103,7 +105,7 @@ export const recheckCommand = defineCommand({
 							printCorruptFile(spinner, filePath, result);
 						}
 					} else {
-						const result = await verifyFile(filePath);
+						const result = await flacVerifier.verify(filePath);
 
 						if (result.status === 'interrupted') {
 							return;

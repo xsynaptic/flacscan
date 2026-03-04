@@ -4,7 +4,7 @@ import BetterSqlite3 from 'better-sqlite3';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import type { FileStatus } from '../../src/database/types.js';
-import type { ErrorSeverity } from '../../src/flac/types.js';
+import type { ErrorSeverity } from '../../src/verifiers/types.js';
 
 import {
 	deleteFileByPath,
