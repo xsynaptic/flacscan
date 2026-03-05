@@ -1,5 +1,6 @@
 import type Database from 'better-sqlite3';
 
+import type { FlacMetadata } from '../metadata.js';
 import type { ErrorSeverity } from '../verifiers/types.js';
 import type { FileRow, FileStatus, UnreadableFileRow } from './types.js';
 
@@ -37,15 +38,7 @@ export function getAllUnreadableFiles(database: Database.Database): UnreadableFi
 
 export function getCorruptFiles(database: Database.Database): FileRow[] {
 	return database
-		.prepare(
-			`SELECT * FROM files WHERE last_result = 'corrupt' ORDER BY
-      CASE error_severity
-        WHEN 'critical' THEN 1
-        WHEN 'recoverable' THEN 2
-        WHEN 'unknown' THEN 3
-        ELSE 4
-      END, current_path`,
-		)
+		.prepare(`SELECT * FROM files WHERE last_result = 'corrupt' ORDER BY current_path`)
 		.all() as FileRow[];
 }
 
@@ -119,6 +112,36 @@ export function getStats(database: Database.Database) {
 		total,
 		unreadable,
 	};
+}
+
+export function updateMetadata(
+	database: Database.Database,
+	currentPath: string,
+	metadata: FlacMetadata,
+) {
+	const now = new Date().toISOString();
+	database
+		.prepare(
+			`
+    UPDATE files SET
+      artist = ?,
+      title = ?,
+      album = ?,
+      date = ?,
+      duration = ?,
+      updated_at = ?
+    WHERE current_path = ?
+  `,
+		)
+		.run(
+			metadata.artist,
+			metadata.title,
+			metadata.album,
+			metadata.date,
+			metadata.duration,
+			now,
+			currentPath,
+		);
 }
 
 export function updateVerificationResult(

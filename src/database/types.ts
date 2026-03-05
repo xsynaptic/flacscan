@@ -1,7 +1,11 @@
 import type { ErrorSeverity } from '../verifiers/types.js';
 
 export interface FileRow {
+	album: null | string;
+	artist: null | string;
 	current_path: string;
+	date: null | string;
+	duration: null | number;
 	error_output: null | string;
 	error_severity: ErrorSeverity | null;
 	error_timestamp: null | string;
@@ -10,6 +14,7 @@ export interface FileRow {
 	first_seen_at: string;
 	last_result: FileStatus;
 	last_verified_at: null | string;
+	title: null | string;
 	updated_at: string;
 }
 

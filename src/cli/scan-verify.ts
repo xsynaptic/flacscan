@@ -10,10 +10,12 @@ import type { FormatVerifier } from '../verifiers/types.js';
 import {
 	deleteFileByPath,
 	getFilesNeedingVerification,
+	updateMetadata,
 	updateVerificationResult,
 	upsertFile,
 } from '../database/queries.js';
 import { logCorruption, logFixApplied, logFixDetected, logFixFailed } from '../logging/scan-log.js';
+import { extractMetadata } from '../metadata.js';
 import { printCorruptFile } from './format-corrupt.js';
 import { isShuttingDown, processPool } from './process-pool.js';
 
@@ -107,7 +109,12 @@ export async function runVerification(
 						}
 						// Still corrupt after stripping — fall through to log as corrupt
 					} else {
-						logFixFailed(config.log_path, file.current_path, fixer.label, fixResult.error ?? 'unknown');
+						logFixFailed(
+							config.log_path,
+							file.current_path,
+							fixer.label,
+							fixResult.error ?? 'unknown',
+						);
 						spinner.clear();
 						console.log(chalk.red(`  ${fixer.label}_FIX_FAILED ${file.current_path}`));
 						console.log(chalk.dim(`          ${fixResult.error ?? 'unknown'}`));
@@ -116,7 +123,9 @@ export async function runVerification(
 					logFixDetected(config.log_path, file.current_path, fixer.label);
 					spinner.clear();
 					console.log(chalk.yellow(`  ${fixer.label}_DETECTED ${file.current_path}`));
-					console.log(chalk.dim(`          Non-standard ${fixer.label} tags found, use --fix to strip`));
+					console.log(
+						chalk.dim(`          Non-standard ${fixer.label} tags found, use --fix to strip`),
+					);
 				}
 
 				updateVerificationResult(db, file.current_path, {
@@ -125,6 +134,11 @@ export async function runVerification(
 					error_timestamp: result.errorTimestamp,
 					last_result: 'corrupt',
 				});
+
+				const metadata = await extractMetadata(file.current_path);
+				if (metadata) {
+					updateMetadata(db, file.current_path, metadata);
+				}
 
 				logCorruption(
 					config.log_path,

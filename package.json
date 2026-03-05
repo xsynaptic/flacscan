@@ -1,6 +1,6 @@
 {
 	"name": "flacscan",
-	"version": "1.1.0",
+	"version": "1.2.1",
 	"description": "Periodic integrity verification for large FLAC collections",
 	"type": "module",
 	"bin": {
@@ -22,7 +22,7 @@
 		"build": "tsdown",
 		"format": "prettier --write .",
 		"lint": "eslint . --fix",
-		"check": "eslint . && knip && tsc --noEmit && vitest run",
+		"check": "prettier --write . && eslint . && knip && tsc --noEmit && vitest run",
 		"check-types": "tsc --noEmit",
 		"knip": "knip",
 		"test": "vitest run",

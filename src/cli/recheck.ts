@@ -12,10 +12,12 @@ import {
 	deleteUnreadableByPath,
 	getAllUnreadableFiles,
 	getCorruptFiles,
+	updateMetadata,
 	updateVerificationResult,
 	upsertUnreadableFile,
 } from '../database/queries.js';
 import { checkMountedPaths } from '../discovery.js';
+import { extractMetadata } from '../metadata.js';
 import { ensureBinary } from '../shell.js';
 import { flacVerifier } from '../verifiers/flac/verify.js';
 import { FlacScanError } from './errors.js';
@@ -83,6 +85,19 @@ export const recheckCommand = defineCommand({
 						spinner.clear();
 						console.log(chalk.blue(`  PRUNED ${filePath}`));
 					} else if (item.source === 'files') {
+						if (
+							!item.row.artist &&
+							!item.row.title &&
+							!item.row.album &&
+							!item.row.date &&
+							!item.row.duration
+						) {
+							const metadata = await extractMetadata(filePath);
+							if (metadata) {
+								updateMetadata(db, filePath, metadata);
+							}
+						}
+
 						const result = await flacVerifier.verify(filePath);
 
 						if (result.status === 'interrupted') {
@@ -101,6 +116,7 @@ export const recheckCommand = defineCommand({
 								error_timestamp: result.errorTimestamp,
 								last_result: 'corrupt',
 							});
+
 							stats.corrupt++;
 							printCorruptFile(spinner, filePath, result);
 						}

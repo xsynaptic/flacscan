@@ -1,6 +1,6 @@
 import { defineCommand } from 'citty';
 
-import type { FileRow } from '../database/types.js';
+import type { FileRow, UnreadableFileRow } from '../database/types.js';
 
 import { loadConfig } from '../config/loader.js';
 import { openDatabase } from '../database/connection.js';
@@ -12,41 +12,72 @@ import {
 import { FlacScanError } from './errors.js';
 import { sharedArguments } from './shared-arguments.js';
 
+interface CorruptJsonEntry {
+	album: null | string;
+	artist: null | string;
+	current_path: string;
+	date: null | string;
+	duration: null | number;
+	error_output: null | string;
+	error_severity: null | string;
+	error_timestamp: null | string;
+	file_size: null | number;
+	title: null | string;
+	type: 'corrupt';
+}
+
+interface UnreadableJsonEntry {
+	current_path: string;
+	error_output: string;
+	type: 'unreadable';
+}
+
 const VALID_FILTERS = ['critical', 'recoverable', 'unknown', 'unreadable'] as const;
 type Filter = (typeof VALID_FILTERS)[number];
 
-function groupBySeverity(files: FileRow[]) {
-	const groups = {
-		critical: [] as FileRow[],
-		recoverable: [] as FileRow[],
-		unknown: [] as FileRow[],
-	};
-	for (const file of files) {
-		const severity = file.error_severity ?? 'unknown';
-		if (severity in groups) {
-			groups[severity as keyof typeof groups].push(file);
-		} else {
-			groups.unknown.push(file);
-		}
-	}
-	return groups;
+function installPipeHandler() {
+	process.stdout.on('error', (error: NodeJS.ErrnoException) => {
+		if (error.code === 'EPIPE') process.exit(0);
+		throw error;
+	});
 }
 
-function writeSection(label: string, files: { current_path: string }[]) {
-	const count = files.length;
-	process.stderr.write(`# ${String(count)} ${label}\n`);
-	for (const file of files) {
-		process.stdout.write(file.current_path + '\n');
-	}
+function toCorruptJson(file: FileRow): CorruptJsonEntry {
+	return {
+		album: file.album,
+		artist: file.artist,
+		current_path: file.current_path,
+		date: file.date,
+		duration: file.duration,
+		error_output: file.error_output,
+		error_severity: file.error_severity,
+		error_timestamp: file.error_timestamp,
+		file_size: file.file_size,
+		title: file.title,
+		type: 'corrupt',
+	};
+}
+
+function toUnreadableJson(file: UnreadableFileRow): UnreadableJsonEntry {
+	return {
+		current_path: file.current_path,
+		error_output: file.error_output,
+		type: 'unreadable',
+	};
 }
 
 export const listCommand = defineCommand({
 	args: {
 		...sharedArguments,
 		filter: {
-			description: 'Filter by severity: critical, recoverable, unknown, unreadable',
+			description: 'Filter: critical, recoverable, unknown, unreadable',
 			required: false,
 			type: 'positional',
+		},
+		json: {
+			description: 'Output as JSON',
+			required: false,
+			type: 'boolean',
 		},
 	},
 	meta: {
@@ -55,7 +86,9 @@ export const listCommand = defineCommand({
 	},
 	run({ args }) {
 		try {
+			installPipeHandler();
 			const filter = args.filter as Filter | undefined;
+			const jsonOutput = args.json === true;
 
 			if (filter && !VALID_FILTERS.includes(filter)) {
 				console.error(`Unknown filter: ${filter}`);
@@ -70,32 +103,53 @@ export const listCommand = defineCommand({
 			try {
 				if (filter === 'unreadable') {
 					const files = getAllUnreadableFiles(db);
-					writeSection('unreadable files', files);
+					if (jsonOutput) {
+						process.stdout.write(
+							JSON.stringify(
+								files.map((f) => toUnreadableJson(f)),
+								null,
+								2,
+							) + '\n',
+						);
+					} else {
+						for (const file of files) process.stdout.write(file.current_path + '\n');
+					}
 					return;
 				}
 
 				if (filter) {
 					const files = getCorruptFilesBySeverity(db, filter);
-					writeSection(`${filter} files`, files);
+					if (jsonOutput) {
+						process.stdout.write(
+							JSON.stringify(
+								files.map((f) => toCorruptJson(f)),
+								null,
+								2,
+							) + '\n',
+						);
+					} else {
+						for (const file of files) process.stdout.write(file.current_path + '\n');
+					}
 					return;
 				}
 
-				// No filter: all corrupt grouped by severity, then unreadable
 				const corrupt = getCorruptFiles(db);
-				const groups = groupBySeverity(corrupt);
 				const unreadable = getAllUnreadableFiles(db);
 
-				let first = true;
-				for (const severity of ['critical', 'recoverable', 'unknown'] as const) {
-					if (groups[severity].length === 0) continue;
-					if (!first) process.stderr.write('\n');
-					writeSection(`${severity} files`, groups[severity]);
-					first = false;
-				}
-
-				if (unreadable.length > 0) {
-					if (!first) process.stderr.write('\n');
-					writeSection('unreadable files', unreadable);
+				if (jsonOutput) {
+					const results: Array<CorruptJsonEntry | UnreadableJsonEntry> = [
+						...corrupt.map((f) => toCorruptJson(f)),
+						...unreadable.map((f) => toUnreadableJson(f)),
+					];
+					results.sort((a, b) => a.current_path.localeCompare(b.current_path));
+					process.stdout.write(JSON.stringify(results, null, 2) + '\n');
+				} else {
+					const paths = [
+						...corrupt.map((f) => f.current_path),
+						...unreadable.map((f) => f.current_path),
+					];
+					paths.sort((a, b) => a.localeCompare(b));
+					for (const path of paths) process.stdout.write(path + '\n');
 				}
 			} finally {
 				db.close();

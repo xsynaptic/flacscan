@@ -350,7 +350,7 @@ describe('findFileByPath', () => {
 });
 
 describe('getCorruptFiles', () => {
-	it('orders by severity then path', () => {
+	it('orders by path', () => {
 		insertFile({
 			current_path: '/music/z.flac',
 			error_severity: 'recoverable',
@@ -376,8 +376,8 @@ describe('getCorruptFiles', () => {
 		expect(result.map((r) => r.current_path)).toEqual([
 			'/music/a.flac',
 			'/music/b.flac',
-			'/music/z.flac',
 			'/music/x.flac',
+			'/music/z.flac',
 		]);
 	});
 

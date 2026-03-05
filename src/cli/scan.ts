@@ -59,7 +59,10 @@ export const scanCommand = defineCommand({
 			try {
 				// File walk
 				const walkSpinner = ora({ discardStdin: false, text: 'Scanning directories...' }).start();
-				const { files, mountCheck } = await discoverFiles(config.directories, flacVerifier.extensions);
+				const { files, mountCheck } = await discoverFiles(
+					config.directories,
+					flacVerifier.extensions,
+				);
 				walkSpinner.succeed(
 					`Found ${String(files.length)} FLAC files across ${String(mountCheck.available.length)} path(s)`,
 				);
@@ -79,14 +82,22 @@ export const scanCommand = defineCommand({
 				}
 
 				// Verification phase
-				const verificationStats = await runVerification(db, config, mountCheck.available, flacVerifier);
+				const verificationStats = await runVerification(
+					db,
+					config,
+					mountCheck.available,
+					flacVerifier,
+				);
 
 				logScanComplete(config.log_path, {
 					corrupt: verificationStats?.corrupt ?? 0,
 					healthy: verificationStats?.healthy ?? 0,
 					pruned: verificationStats?.pruned ?? 0,
 					total: verificationStats
-						? verificationStats.healthy + verificationStats.corrupt + verificationStats.fixed + verificationStats.pruned
+						? verificationStats.healthy +
+							verificationStats.corrupt +
+							verificationStats.fixed +
+							verificationStats.pruned
 						: 0,
 				});
 
