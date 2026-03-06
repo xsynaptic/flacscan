@@ -1,4 +1,5 @@
 import { defineCommand } from 'citty';
+import path from 'node:path';
 
 import type { FileRow, UnreadableFileRow } from '../database/types.js';
 
@@ -15,25 +16,33 @@ import { sharedArguments } from './shared-arguments.js';
 interface CorruptJsonEntry {
 	album: null | string;
 	artist: null | string;
-	current_path: string;
-	date: null | string;
 	duration: null | number;
 	error_output: null | string;
 	error_severity: null | string;
 	error_timestamp: null | string;
 	file_size: null | number;
+	input_text: string;
+	original_path: string;
 	title: null | string;
 	type: 'corrupt';
+	year: null | string;
 }
 
 interface UnreadableJsonEntry {
-	current_path: string;
 	error_output: string;
+	original_path: string;
 	type: 'unreadable';
 }
 
 const VALID_FILTERS = ['critical', 'recoverable', 'unknown', 'unreadable'] as const;
 type Filter = (typeof VALID_FILTERS)[number];
+
+function deriveInputText(file: FileRow): string {
+	const artist = file.artist?.trim();
+	const title = file.title?.trim();
+	if (artist && title) return `${artist} - ${title}`;
+	return path.basename(file.current_path, path.extname(file.current_path));
+}
 
 function installPipeHandler() {
 	process.stdout.on('error', (error: NodeJS.ErrnoException) => {
@@ -46,22 +55,23 @@ function toCorruptJson(file: FileRow): CorruptJsonEntry {
 	return {
 		album: file.album,
 		artist: file.artist,
-		current_path: file.current_path,
-		date: file.date,
 		duration: file.duration,
 		error_output: file.error_output,
 		error_severity: file.error_severity,
 		error_timestamp: file.error_timestamp,
 		file_size: file.file_size,
+		input_text: deriveInputText(file),
+		original_path: file.current_path,
 		title: file.title,
 		type: 'corrupt',
+		year: file.date,
 	};
 }
 
 function toUnreadableJson(file: UnreadableFileRow): UnreadableJsonEntry {
 	return {
-		current_path: file.current_path,
 		error_output: file.error_output,
+		original_path: file.current_path,
 		type: 'unreadable',
 	};
 }
@@ -141,7 +151,7 @@ export const listCommand = defineCommand({
 						...corrupt.map((f) => toCorruptJson(f)),
 						...unreadable.map((f) => toUnreadableJson(f)),
 					];
-					results.sort((a, b) => a.current_path.localeCompare(b.current_path));
+					results.sort((a, b) => a.original_path.localeCompare(b.original_path));
 					process.stdout.write(JSON.stringify(results, null, 2) + '\n');
 				} else {
 					const paths = [
@@ -149,7 +159,7 @@ export const listCommand = defineCommand({
 						...unreadable.map((f) => f.current_path),
 					];
 					paths.sort((a, b) => a.localeCompare(b));
-					for (const path of paths) process.stdout.write(path + '\n');
+					for (const filePath of paths) process.stdout.write(filePath + '\n');
 				}
 			} finally {
 				db.close();
