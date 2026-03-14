@@ -30,7 +30,7 @@
 		"prepublishOnly": "pnpm build"
 	},
 	"dependencies": {
-		"better-sqlite3": "^12.6.2",
+		"better-sqlite3": "^12.8.0",
 		"chalk": "^5.4.1",
 		"citty": "^0.2.1",
 		"ora": "^9.3.0",
@@ -51,20 +51,20 @@
 	},
 	"license": "MIT",
 	"devDependencies": {
-		"@eslint/js": "^9.39.3",
+		"@eslint/js": "^9.39.4",
 		"@types/better-sqlite3": "^7.6.13",
-		"@types/node": "^25.3.3",
-		"eslint": "^9.39.3",
+		"@types/node": "^25.5.0",
+		"eslint": "^9.39.4",
 		"eslint-config-prettier": "^10.1.8",
 		"eslint-plugin-perfectionist": "^5.6.0",
 		"eslint-plugin-unicorn": "^63.0.0",
 		"jiti": "^2.6.1",
-		"knip": "^5.85.0",
+		"knip": "^5.86.0",
 		"prettier": "^3.8.1",
 		"tsdown": "^0.20.3",
 		"tsx": "^4.19.3",
 		"typescript": "^5.7.3",
-		"typescript-eslint": "^8.56.1",
-		"vitest": "^4.0.18"
+		"typescript-eslint": "^8.57.0",
+		"vitest": "^4.1.0"
 	}
 }
