@@ -1,12 +1,5 @@
 export type ErrorSeverity = 'critical' | 'recoverable' | 'unknown';
 
-export interface FormatFixer {
-	detect(errorOutput: string): boolean;
-	fix(filePath: string): Promise<{ error?: string; ok: boolean }>;
-	label: string;
-	requiredBinaries: Array<{ hint?: string; name: string }>;
-}
-
 export interface FormatVerifier {
 	extensions: string[];
 	fixer?: FormatFixer;
@@ -23,3 +16,10 @@ export type VerificationResult =
 	  }
 	| { status: 'healthy' }
 	| { status: 'interrupted' };
+
+interface FormatFixer {
+	detect(errorOutput: string): boolean;
+	fix(filePath: string): Promise<{ error?: string; ok: boolean }>;
+	label: string;
+	requiredBinaries: Array<{ hint?: string; name: string }>;
+}

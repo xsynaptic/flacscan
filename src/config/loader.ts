@@ -29,7 +29,7 @@ export function loadConfig(cliArgs: CliArgs): FlacScanConfig {
 			const raw = fs.readFileSync(configPath, 'utf8');
 			const parsed: unknown = parseYaml(raw);
 			if (parsed && typeof parsed === 'object') {
-				fileConfig = parsed as Partial<FlacScanConfig>;
+				fileConfig = parsed;
 			}
 		} catch (error) {
 			throw new FlacScanError(`Failed to parse config file at ${configPath}: ${String(error)}`);

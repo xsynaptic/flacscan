@@ -1,7 +1,14 @@
 {
 	"name": "flacscan",
-	"version": "1.2.1",
+	"version": "2.0.0",
 	"description": "Periodic integrity verification for large FLAC collections",
+	"keywords": [
+		"flac",
+		"bitrot",
+		"integrity",
+		"audio",
+		"cli"
+	],
 	"type": "module",
 	"bin": {
 		"flacscan": "./dist/index.mjs"
@@ -20,9 +27,9 @@
 	"scripts": {
 		"dev": "tsx src/index.ts",
 		"build": "tsdown",
-		"format": "prettier --write .",
+		"format": "prettier --write . && eslint --fix . && knip && tsc --noEmit && vitest run",
+		"check": "prettier --check . && eslint . && knip && tsc --noEmit && vitest run",
 		"lint": "eslint . --fix",
-		"check": "prettier --write . && eslint . && knip && tsc --noEmit && vitest run",
 		"check-types": "tsc --noEmit",
 		"knip": "knip",
 		"test": "vitest run",
@@ -30,11 +37,28 @@
 		"prepublishOnly": "pnpm build"
 	},
 	"dependencies": {
-		"better-sqlite3": "^12.8.0",
+		"better-sqlite3": "^12.9.0",
 		"chalk": "^5.4.1",
-		"citty": "^0.2.1",
-		"ora": "^9.3.0",
-		"yaml": "^2.7.1"
+		"citty": "^0.2.2",
+		"ora": "^9.4.0",
+		"yaml": "^2.8.4"
+	},
+	"devDependencies": {
+		"@eslint/js": "^9.39.4",
+		"@types/better-sqlite3": "^7.6.13",
+		"@types/node": "^25.6.2",
+		"eslint": "^9.39.4",
+		"eslint-config-prettier": "^10.1.8",
+		"eslint-plugin-perfectionist": "^5.9.0",
+		"eslint-plugin-unicorn": "^64.0.0",
+		"jiti": "^2.7.0",
+		"knip": "^6.12.2",
+		"prettier": "^3.8.3",
+		"tsdown": "^0.22.0",
+		"tsx": "^4.19.3",
+		"typescript": "^6.0.3",
+		"typescript-eslint": "^8.59.2",
+		"vitest": "^4.1.5"
 	},
 	"pnpm": {
 		"onlyBuiltDependencies": [
@@ -50,21 +74,5 @@
 		}
 	},
 	"license": "MIT",
-	"devDependencies": {
-		"@eslint/js": "^9.39.4",
-		"@types/better-sqlite3": "^7.6.13",
-		"@types/node": "^25.5.0",
-		"eslint": "^9.39.4",
-		"eslint-config-prettier": "^10.1.8",
-		"eslint-plugin-perfectionist": "^5.6.0",
-		"eslint-plugin-unicorn": "^63.0.0",
-		"jiti": "^2.6.1",
-		"knip": "^5.86.0",
-		"prettier": "^3.8.1",
-		"tsdown": "^0.20.3",
-		"tsx": "^4.19.3",
-		"typescript": "^5.7.3",
-		"typescript-eslint": "^8.57.0",
-		"vitest": "^4.1.0"
-	}
+	"packageManager": "pnpm@11.0.9+sha512.34ce82e6780233cf9cad8685029a8f81d2e06196c5a9bad98879f7424940c6817c4e4524fb7d38b8553ceed48b9758b8ebaf1abd3600c232c4c8cf7366086f38"
 }
