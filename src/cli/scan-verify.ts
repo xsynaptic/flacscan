@@ -16,6 +16,7 @@ import {
 } from '../database/queries.js';
 import { logCorruption, logFixApplied, logFixDetected, logFixFailed } from '../logging/scan-log.js';
 import { extractMetadata } from '../metadata.js';
+import { classifyCorruptFile } from '../verifiers/severity.js';
 import { printCorruptFile } from './format-corrupt.js';
 import { isShuttingDown, processPool } from './process-pool.js';
 
@@ -107,7 +108,7 @@ export async function runVerification(
 							spinner.text = `Verifying: ${String(verified)}/${String(filesToVerify.length)} files`;
 							return;
 						}
-						// Still corrupt after stripping — fall through to log as corrupt
+						// Still corrupt after stripping; fall through to log as corrupt
 					} else {
 						logFixFailed(
 							config.log_path,
@@ -128,9 +129,16 @@ export async function runVerification(
 					);
 				}
 
+				const severity = await classifyCorruptFile(
+					file.current_path,
+					result.errorOutput,
+					result.errorTimestamp,
+					config,
+				);
+
 				updateVerificationResult(db, file.current_path, {
 					error_output: result.errorOutput,
-					error_severity: result.severity,
+					error_severity: severity,
 					error_timestamp: result.errorTimestamp,
 					last_result: 'corrupt',
 				});
@@ -142,12 +150,12 @@ export async function runVerification(
 
 				logCorruption(
 					config.log_path,
-					result.severity,
+					severity,
 					file.current_path,
 					result.errorOutput.replaceAll('\n', ' '),
 				);
 
-				printCorruptFile(spinner, file.current_path, result);
+				printCorruptFile(spinner, file.current_path, severity, result);
 
 				stats.corrupt++;
 				stats.exitCode = 1;

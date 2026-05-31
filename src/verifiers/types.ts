@@ -8,12 +8,7 @@ export interface FormatVerifier {
 }
 
 export type VerificationResult =
-	| {
-			errorOutput: string;
-			errorTimestamp: null | string;
-			severity: ErrorSeverity;
-			status: 'corrupt';
-	  }
+	| { errorOutput: string; errorTimestamp: null | string; status: 'corrupt' }
 	| { status: 'healthy' }
 	| { status: 'interrupted' };
 

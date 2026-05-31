@@ -20,6 +20,7 @@ import { checkMountedPaths } from '../discovery.js';
 import { extractMetadata } from '../metadata.js';
 import { ensureBinary } from '../shell.js';
 import { flacVerifier } from '../verifiers/flac/verify.js';
+import { classifyCorruptFile } from '../verifiers/severity.js';
 import { FlacScanError } from './errors.js';
 import { printCorruptFile } from './format-corrupt.js';
 import { installShutdownHandler, isShuttingDown, processPool } from './process-pool.js';
@@ -110,15 +111,21 @@ export const recheckCommand = defineCommand({
 							spinner.clear();
 							console.log(chalk.green(`  HEALTHY ${filePath}`));
 						} else {
+							const severity = await classifyCorruptFile(
+								filePath,
+								result.errorOutput,
+								result.errorTimestamp,
+								config,
+							);
 							updateVerificationResult(db, filePath, {
 								error_output: result.errorOutput,
-								error_severity: result.severity,
+								error_severity: severity,
 								error_timestamp: result.errorTimestamp,
 								last_result: 'corrupt',
 							});
 
 							stats.corrupt++;
-							printCorruptFile(spinner, filePath, result);
+							printCorruptFile(spinner, filePath, severity, result);
 						}
 					} else {
 						const result = await flacVerifier.verify(filePath);
@@ -133,12 +140,18 @@ export const recheckCommand = defineCommand({
 							spinner.clear();
 							console.log(chalk.green(`  HEALTHY ${filePath}`));
 						} else {
+							const severity = await classifyCorruptFile(
+								filePath,
+								result.errorOutput,
+								result.errorTimestamp,
+								config,
+							);
 							upsertUnreadableFile(db, {
 								current_path: filePath,
 								error_output: result.errorOutput,
 							});
 							stats.corrupt++;
-							printCorruptFile(spinner, filePath, result);
+							printCorruptFile(spinner, filePath, severity, result);
 						}
 					}
 

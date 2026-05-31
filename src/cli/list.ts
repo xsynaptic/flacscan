@@ -23,6 +23,10 @@ interface CorruptJsonEntry {
 	file_size: null | number;
 	input_text: string;
 	original_path: string;
+	recovery_attempted_at: null | string;
+	recovery_detail: null | string;
+	recovery_lost_samples: null | number;
+	recovery_result: null | string;
 	title: null | string;
 	type: 'corrupt';
 	year: null | string;
@@ -62,6 +66,10 @@ function toCorruptJson(file: FileRow): CorruptJsonEntry {
 		file_size: file.file_size,
 		input_text: deriveInputText(file),
 		original_path: file.current_path,
+		recovery_attempted_at: file.recovery_attempted_at,
+		recovery_detail: file.recovery_detail,
+		recovery_lost_samples: file.recovery_lost_samples,
+		recovery_result: file.recovery_result,
 		title: file.title,
 		type: 'corrupt',
 		year: file.date,

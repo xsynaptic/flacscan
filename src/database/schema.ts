@@ -15,6 +15,10 @@ CREATE TABLE IF NOT EXISTS files (
   duration        REAL,
   file_size       INTEGER,
   file_mtime      TEXT,
+  recovery_attempted_at TEXT,
+  recovery_result       TEXT,
+  recovery_lost_samples INTEGER,
+  recovery_detail       TEXT,
   first_seen_at   TEXT NOT NULL,
   updated_at      TEXT NOT NULL
 );
@@ -43,12 +47,23 @@ export function initializeSchema(database: Database.Database) {
 function applyMigrations(database: Database.Database) {
 	const columns = database.pragma('table_info(files)') as Array<{ name: string }>;
 	const existing = new Set(columns.map((c) => c.name));
-	for (const col of ['artist', 'title', 'album', 'date']) {
+	for (const col of [
+		'artist',
+		'title',
+		'album',
+		'date',
+		'recovery_attempted_at',
+		'recovery_result',
+		'recovery_detail',
+	]) {
 		if (!existing.has(col)) {
 			database.exec(`ALTER TABLE files ADD COLUMN ${col} TEXT`);
 		}
 	}
 	if (!existing.has('duration')) {
 		database.exec(`ALTER TABLE files ADD COLUMN duration REAL`);
+	}
+	if (!existing.has('recovery_lost_samples')) {
+		database.exec(`ALTER TABLE files ADD COLUMN recovery_lost_samples INTEGER`);
 	}
 }

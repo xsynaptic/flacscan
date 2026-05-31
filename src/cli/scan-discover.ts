@@ -6,6 +6,7 @@ import ora from 'ora';
 import type { FlacScanConfig } from '../config/types.js';
 
 import {
+	clearRecoveryOutcome,
 	findFileByPath,
 	findUnreadableByPath,
 	upsertFile,
@@ -83,6 +84,10 @@ export async function runDiscovery(
 				file_mtime: mtime,
 				file_size: size,
 			});
+			// The file changed (or is new); any prior `recover` verdict is moot now.
+			if (existing) {
+				clearRecoveryOutcome(db, filePath);
+			}
 		} catch (error) {
 			console.warn(`Warning: failed to update database for ${filePath}: ${String(error)}`);
 		}

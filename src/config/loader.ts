@@ -15,6 +15,8 @@ interface CliArgs {
 	directory?: string | undefined;
 	fix?: boolean | string | undefined;
 	'log-path'?: string | undefined;
+	'max-trailing-loss'?: string | undefined;
+	'min-free-bytes'?: string | undefined;
 	parallelism?: string | undefined;
 	'rescan-days'?: string | undefined;
 }
@@ -45,10 +47,18 @@ export function loadConfig(cliArgs: CliArgs): FlacScanConfig {
 		directories: fileConfig.directories ?? DEFAULT_CONFIG.directories,
 		fix: cliArgs.fix === true || fileConfig.fix || DEFAULT_CONFIG.fix,
 		log_path: expandTilde(cliArgs['log-path'] ?? fileConfig.log_path ?? DEFAULT_CONFIG.log_path),
+		min_free_bytes:
+			parseNumeric(cliArgs['min-free-bytes'], 'min-free-bytes') ??
+			fileConfig.min_free_bytes ??
+			DEFAULT_CONFIG.min_free_bytes,
 		parallelism:
 			parseNumeric(cliArgs.parallelism, 'parallelism') ??
 			fileConfig.parallelism ??
 			DEFAULT_CONFIG.parallelism,
+		recover_max_trailing_loss_seconds:
+			parsePositiveNumber(cliArgs['max-trailing-loss'], 'max-trailing-loss') ??
+			fileConfig.recover_max_trailing_loss_seconds ??
+			DEFAULT_CONFIG.recover_max_trailing_loss_seconds,
 		rescan_interval_days:
 			parseNumeric(cliArgs['rescan-days'], 'rescan-days') ??
 			fileConfig.rescan_interval_days ??
@@ -84,6 +94,15 @@ function parseNumeric(value: string | undefined, name: string): number | undefin
 	const parsed = Number.parseInt(value, 10);
 	if (Number.isNaN(parsed) || parsed <= 0) {
 		throw new FlacScanError(`Invalid value for ${name}: "${value}" (must be a positive integer)`);
+	}
+	return parsed;
+}
+
+function parsePositiveNumber(value: string | undefined, name: string): number | undefined {
+	if (value === undefined) return undefined;
+	const parsed = Number.parseFloat(value);
+	if (!Number.isFinite(parsed) || parsed <= 0) {
+		throw new FlacScanError(`Invalid value for ${name}: "${value}" (must be a positive number)`);
 	}
 	return parsed;
 }

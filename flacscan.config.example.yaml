@@ -6,3 +6,5 @@ batch_size: 1000
 parallelism: 2
 rescan_interval_days: 90
 fix: false # Fix issues where possible (ID3 tag stripping)
+min_free_bytes: 1073741824 # Free space (bytes) the `recover` command keeps on every volume; it aborts if any volume is short
+recover_max_trailing_loss_seconds: 3 # `recover` accepts a re-encode only if it loses at most this much audio off the end

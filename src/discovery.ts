@@ -1,6 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
+import { originalNameForRecoveredFile } from './recovery.js';
+
 interface MountCheckResult {
 	available: string[];
 	skipped: string[];
@@ -33,11 +35,23 @@ export async function discoverFiles(
 			const matched: string[] = [];
 			for (const entry of entries) {
 				if (
-					typeof entry === 'string' &&
-					extensions.some((ext) => entry.toLowerCase().endsWith(ext))
+					typeof entry !== 'string' ||
+					!extensions.some((extension) => entry.toLowerCase().endsWith(extension))
 				) {
-					matched.push(path.join(directory, entry));
+					continue;
 				}
+
+				// A recovered file ("Track [Recovered].flac") is skipped only while its original
+				// still sits in the same directory; once the original is gone it's a normal file.
+				const originalName = originalNameForRecoveredFile(path.basename(entry));
+				if (
+					originalName !== null &&
+					fs.existsSync(path.join(directory, path.dirname(entry), originalName))
+				) {
+					continue;
+				}
+
+				matched.push(path.join(directory, entry));
 			}
 			return matched;
 		}),

@@ -4,7 +4,9 @@ export interface FlacScanConfig {
 	directories: string[];
 	fix: boolean;
 	log_path: string;
+	min_free_bytes: number;
 	parallelism: number;
+	recover_max_trailing_loss_seconds: number;
 	rescan_interval_days: number;
 }
 
@@ -14,6 +16,8 @@ export const DEFAULT_CONFIG: FlacScanConfig = {
 	directories: [],
 	fix: false,
 	log_path: '~/.flacscan/flacscan.log',
+	min_free_bytes: 1_073_741_824,
 	parallelism: 1,
+	recover_max_trailing_loss_seconds: 3,
 	rescan_interval_days: 90,
 };

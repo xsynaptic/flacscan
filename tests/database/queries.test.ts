@@ -7,11 +7,15 @@ import type { FileStatus } from '../../src/database/types.js';
 import type { ErrorSeverity } from '../../src/verifiers/types.js';
 
 import {
+	clearRecoveryOutcome,
+	countRecoveryAttempted,
 	deleteFileByPath,
 	findFileByPath,
 	getCorruptFiles,
 	getFilesNeedingVerification,
+	getRecoveryCandidates,
 	getStats,
+	recordRecoveryOutcome,
 	updateVerificationResult,
 	upsertFile,
 	upsertUnreadableFile,
@@ -65,6 +69,7 @@ describe('getStats', () => {
 			corrupt: 0,
 			healthy: 0,
 			pending: 0,
+			recoveryBreakdown: [],
 			severityBreakdown: [],
 			total: 0,
 			unreadable: 0,
@@ -227,14 +232,20 @@ describe('upsertFile', () => {
 		expect(row!.last_result).toBe('pending');
 	});
 
-	it('on conflict updates size/mtime/updated_at but preserves first_seen_at and last_result', () => {
+	it('on conflict updates stats, preserves first_seen_at, and resets verification state', () => {
 		upsertFile(db, {
 			current_path: '/music/test.flac',
-			file_mtime: null,
-			file_size: null,
+			file_mtime: '2025-01-01T00:00:00.000Z',
+			file_size: 1024,
 		});
 		const first = findFileByPath(db, '/music/test.flac')!;
+		updateVerificationResult(db, '/music/test.flac', {
+			error_output: 'boom',
+			error_severity: 'critical',
+			last_result: 'corrupt',
+		});
 
+		// Re-discovered with different stats means the bytes changed — the prior verdict is stale.
 		upsertFile(db, {
 			current_path: '/music/test.flac',
 			file_mtime: '2025-06-01T00:00:00.000Z',
@@ -245,6 +256,7 @@ describe('upsertFile', () => {
 		expect(updated.file_size).toBe(2048);
 		expect(updated.first_seen_at).toBe(first.first_seen_at);
 		expect(updated.last_result).toBe('pending');
+		expect(updated.last_verified_at).toBeNull();
 	});
 });
 
@@ -392,5 +404,89 @@ describe('getCorruptFiles', () => {
 		const result = getCorruptFiles(db);
 		expect(result).toHaveLength(1);
 		expect(result[0]!.current_path).toBe('/music/b.flac');
+	});
+});
+
+describe('recovery outcomes', () => {
+	it('records and clears a recovery outcome', () => {
+		insertFile({
+			current_path: '/music/x.flac',
+			error_severity: 'recoverable',
+			last_result: 'corrupt',
+		});
+
+		recordRecoveryOutcome(db, '/music/x.flac', {
+			detail: null,
+			lostSamples: 88_200,
+			result: 'recovered',
+		});
+		let row = findFileByPath(db, '/music/x.flac')!;
+		expect(row.recovery_result).toBe('recovered');
+		expect(row.recovery_lost_samples).toBe(88_200);
+		expect(row.recovery_detail).toBeNull();
+		expect(row.recovery_attempted_at).not.toBeNull();
+
+		clearRecoveryOutcome(db, '/music/x.flac');
+		row = findFileByPath(db, '/music/x.flac')!;
+		expect(row.recovery_result).toBeNull();
+		expect(row.recovery_lost_samples).toBeNull();
+		expect(row.recovery_detail).toBeNull();
+		expect(row.recovery_attempted_at).toBeNull();
+	});
+
+	it('counts only corrupt files that have been attempted', () => {
+		insertFile({
+			current_path: '/music/a.flac',
+			error_severity: 'recoverable',
+			last_result: 'corrupt',
+		});
+		insertFile({
+			current_path: '/music/b.flac',
+			error_severity: 'critical',
+			last_result: 'corrupt',
+		});
+		insertFile({ current_path: '/music/c.flac', last_result: 'healthy' });
+
+		expect(countRecoveryAttempted(db)).toBe(0);
+		recordRecoveryOutcome(db, '/music/a.flac', {
+			detail: 'too lossy',
+			lostSamples: 999_999,
+			result: 'unsuitable',
+		});
+		expect(countRecoveryAttempted(db)).toBe(1);
+	});
+
+	it('lists candidates, optionally filtering severity and skipping attempted', () => {
+		insertFile({
+			current_path: '/music/a.flac',
+			error_severity: 'recoverable',
+			last_result: 'corrupt',
+		});
+		insertFile({
+			current_path: '/music/b.flac',
+			error_severity: 'critical',
+			last_result: 'corrupt',
+		});
+		insertFile({
+			current_path: '/music/c.flac',
+			error_severity: 'recoverable',
+			last_result: 'corrupt',
+		});
+		insertFile({ current_path: '/music/d.flac', last_result: 'healthy' });
+		recordRecoveryOutcome(db, '/music/a.flac', {
+			detail: 'too lossy',
+			lostSamples: 1,
+			result: 'unsuitable',
+		});
+
+		// Default: skips already-attempted ('/music/a.flac' has a recovery_result).
+		expect(getRecoveryCandidates(db).map((file) => file.current_path)).toEqual([
+			'/music/b.flac',
+			'/music/c.flac',
+		]);
+		// Severity filter narrows further, still skipping already-attempted.
+		expect(
+			getRecoveryCandidates(db, { severity: 'recoverable' }).map((file) => file.current_path),
+		).toEqual(['/music/c.flac']);
 	});
 });

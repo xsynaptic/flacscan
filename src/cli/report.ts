@@ -71,6 +71,14 @@ export const reportCommand = defineCommand({
 							if (file.last_verified_at) {
 								write(`      Last verified: ${file.last_verified_at}`);
 							}
+							if (file.recovery_result) {
+								const lost =
+									file.recovery_lost_samples === null
+										? ''
+										: ` (${String(file.recovery_lost_samples)} samples lost off the end)`;
+								const why = file.recovery_detail ? ` - ${file.recovery_detail}` : '';
+								write(`      Recovery: ${file.recovery_result}${lost}${why}`);
+							}
 							if (file.error_output) {
 								write(`      Error: ${file.error_output.replaceAll('\n', '\n             ')}`);
 							}

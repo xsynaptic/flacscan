@@ -51,6 +51,20 @@ export const statusCommand = defineCommand({
 					}
 				}
 
+				if (stats.recoveryBreakdown.some((row) => row.recovery_result !== null)) {
+					console.log(chalk.bold('\n  Recovery:'));
+					for (const row of stats.recoveryBreakdown) {
+						const label = row.recovery_result ?? 'not yet attempted';
+						const color =
+							row.recovery_result === 'recovered'
+								? chalk.green
+								: row.recovery_result === 'unsuitable'
+									? chalk.yellow
+									: chalk.dim;
+						console.log(`    ${color(label)}: ${String(row.count)}`);
+					}
+				}
+
 				console.log(chalk.bold('\n  Configured paths:'));
 				for (const dir of mountCheck.available) {
 					console.log(`    ${chalk.green('mounted')}  ${dir}`);

@@ -6,7 +6,7 @@ export function installShutdownHandler() {
 			process.exit(2);
 		}
 		shuttingDown = true;
-		console.log('\nGracefully shutting down — waiting for in-flight workers to finish...');
+		console.log('\nGracefully shutting down; waiting for in-flight workers to finish...');
 	});
 }
 

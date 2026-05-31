@@ -3,15 +3,20 @@ import { runMain } from 'citty';
 
 import { main } from './cli/main.js';
 
-const subcommands = new Set(['list', 'recheck', 'report', 'scan', 'status']);
 const rawArgs = process.argv.slice(2);
-const hasHelp = rawArgs.includes('--help') || rawArgs.includes('-h');
-const hasVersion = rawArgs.length === 1 && rawArgs[0] === '--version';
-const firstPositional = rawArgs.find((arg) => !arg.startsWith('-'));
+const firstArg = rawArgs[0];
 
-const effectiveArgs =
-	!hasHelp && !hasVersion && (!firstPositional || !subcommands.has(firstPositional))
-		? ['scan', ...rawArgs]
-		: rawArgs;
+function resolveArgs(): string[] {
+	if (firstArg === undefined || firstArg === 'help') return [];
+	if (
+		firstArg.startsWith('-') &&
+		firstArg !== '-h' &&
+		firstArg !== '--help' &&
+		firstArg !== '--version'
+	) {
+		return ['scan', ...rawArgs];
+	}
+	return rawArgs;
+}
 
-void runMain(main, { rawArgs: effectiveArgs });
+void runMain(main, { rawArgs: resolveArgs() });

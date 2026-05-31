@@ -1,0 +1,205 @@
+// Pure helpers for the `recover` command and its scan-time severity prediction. The
+// accept/reject decision, the `[Recovered].flac` naming convention (also used by discovery
+// to ignore those files while their original is present), the per-volume disk-space check,
+// and the severity classifier that predicts whether `recover` would accept a file given the
+// stderr/offset captured at scan time. No I/O, no dependencies on the CLI layer.
+
+import path from 'node:path';
+
+import type { ErrorSeverity } from './verifiers/types.js';
+
+// The reference decoder, in its default mode, stops at the first decode error, so it emits
+// a contiguous run `[0 .. delivered)` and nothing after. Whatever audio is missing is
+// therefore provably the *tail* (`[delivered .. claimed)`). `classifyRecovery` keeps the
+// re-encode only when that tail loss is small, the decoder actually truncated (so this
+// isn't a fully-decodable file with an un-glitch-detected MD5 mismatch), the claimed length
+// is known, and the re-encoded file itself passes `flac -t`.
+
+export interface RecoveryClassification {
+	accepted: boolean;
+	// Reason text when rejected (maps to `recovery_detail`); null when accepted.
+	detail: null | string;
+	// `claimed - delivered`, the audio lost off the end; null when the claimed length is unknown.
+	lostSamples: null | number;
+}
+
+export function classifyRecovery(input: {
+	claimedSamples: number;
+	deliveredSamples: number;
+	maxTrailingLossSeconds: number;
+	reencodeVerified: boolean;
+	sampleRate: number;
+}): RecoveryClassification {
+	const { claimedSamples, deliveredSamples, maxTrailingLossSeconds, reencodeVerified, sampleRate } =
+		input;
+
+	if (claimedSamples <= 0) {
+		return {
+			accepted: false,
+			detail: 'unknown length (STREAMINFO total samples = 0)',
+			lostSamples: null,
+		};
+	}
+	if (sampleRate <= 0) {
+		return { accepted: false, detail: 'unknown sample rate', lostSamples: null };
+	}
+	if (deliveredSamples <= 0) {
+		return {
+			accepted: false,
+			detail: 'decode produced no usable audio',
+			lostSamples: claimedSamples,
+		};
+	}
+	if (deliveredSamples >= claimedSamples) {
+		// Decoded the whole stream without truncating e.g. an MD5-only mismatch. A re-encode
+		// would just carry the un-glitch-detected corruption forward, so it isn't a clean copy.
+		return {
+			accepted: false,
+			detail: 'decodes fully, no truncation (re-encode would keep the corruption)',
+			lostSamples: 0,
+		};
+	}
+
+	const lostSamples = claimedSamples - deliveredSamples;
+	const lostSeconds = lostSamples / sampleRate;
+	if (lostSeconds > maxTrailingLossSeconds) {
+		return {
+			accepted: false,
+			detail: `trailing loss ${lostSeconds.toFixed(1)}s exceeds the ${maxTrailingLossSeconds.toFixed(1)}s limit`,
+			lostSamples,
+		};
+	}
+	if (!reencodeVerified) {
+		return { accepted: false, detail: 're-encode failed verification', lostSamples };
+	}
+	return { accepted: true, detail: null, lostSamples };
+}
+
+const RECOVERED_SUFFIX = ' [Recovered]';
+// Matches the trailing " [Recovered]" on a file's basename (extension already removed).
+const RECOVERED_BASENAME_RE = / \[Recovered\]$/;
+
+/**
+ * Predict the severity of a corrupt file by running the same `classifyRecovery` rule
+ * `recover` uses at runtime so `recoverable` ⇒ `recover` will accept it; `critical` ⇒
+ * `recover` will reject it; `unknown` ⇒ we can't tell (the file's length/rate wasn't
+ * probable, usually because `metaflac` itself can't read it).
+ *
+ * Callers pass `null` for `claimedSamples`/`sampleRate` when the metaflac probe failed.
+ * `reencodeVerified: true` is assumed; we can't actually re-encode every file at scan
+ * time. (In practice, re-encoding from a clean PCM prefix never produces a file that
+ * fails `flac -t`.)
+ */
+export function classifySeverity(input: {
+	claimedSamples: null | number;
+	errorOutput: string;
+	errorTimestamp: null | string;
+	maxTrailingLossSeconds: number;
+	sampleRate: null | number;
+}): ErrorSeverity {
+	if (input.claimedSamples === null || input.sampleRate === null) return 'unknown';
+
+	const deliveredSamples = predictDeliveredSamples(
+		input.errorOutput,
+		input.errorTimestamp,
+		input.claimedSamples,
+	);
+	const result = classifyRecovery({
+		claimedSamples: input.claimedSamples,
+		deliveredSamples,
+		maxTrailingLossSeconds: input.maxTrailingLossSeconds,
+		reencodeVerified: true,
+		sampleRate: input.sampleRate,
+	});
+	if (result.accepted) return 'recoverable';
+	if (
+		result.detail?.startsWith('unknown length') ||
+		result.detail?.startsWith('unknown sample rate')
+	) {
+		return 'unknown';
+	}
+	return 'critical';
+}
+
+/**
+ * For each volume, check it can hold all of its pending recovered files while keeping at
+ * least `minFreeBytes` free. Returns one entry per volume that comes up short; an empty
+ * array means every volume has room. Pure; callers pass already-gathered sizes and
+ * free-space figures.
+ */
+export function findSpaceViolations(
+	items: readonly { dev: number; size: number }[],
+	volumes: readonly { dev: number; freeBytes: number }[],
+	minFreeBytes: number,
+): { dev: number; freeBytes: number; requiredBytes: number; shortfallBytes: number }[] {
+	const bytesByDev = new Map<number, number>();
+	for (const item of items) {
+		bytesByDev.set(item.dev, (bytesByDev.get(item.dev) ?? 0) + item.size);
+	}
+
+	const violations: {
+		dev: number;
+		freeBytes: number;
+		requiredBytes: number;
+		shortfallBytes: number;
+	}[] = [];
+	for (const volume of volumes) {
+		const requiredBytes = (bytesByDev.get(volume.dev) ?? 0) + minFreeBytes;
+		if (volume.freeBytes < requiredBytes) {
+			violations.push({
+				dev: volume.dev,
+				freeBytes: volume.freeBytes,
+				requiredBytes,
+				shortfallBytes: requiredBytes - volume.freeBytes,
+			});
+		}
+	}
+	return violations;
+}
+
+/**
+ * If `fileName` looks like a recovered file (`Track [Recovered].flac`), the name of the
+ * original it was made from (`Track.flac`); otherwise `null`. Used by discovery to skip a
+ * recovered file only while its original is still present alongside it.
+ */
+export function originalNameForRecoveredFile(fileName: string): null | string {
+	const extension = path.extname(fileName);
+	const base = path.basename(fileName, extension);
+	if (!RECOVERED_BASENAME_RE.test(base)) return null;
+	return base.replace(RECOVERED_BASENAME_RE, '') + extension;
+}
+
+/**
+ * Path of the re-encoded copy `recover` writes next to `originalPath`; the suffix goes
+ * before the extension so the `.flac` stays last (`Track.flac` → `Track [Recovered].flac`).
+ */
+export function recoveredFilePath(originalPath: string): string {
+	const extension = path.extname(originalPath);
+	const base = path.basename(originalPath, extension);
+	return path.join(path.dirname(originalPath), `${base}${RECOVERED_SUFFIX}${extension}`);
+}
+
+/**
+ * What `flac -d` (stop-at-first-error) would have delivered when `flac -t` reported this
+ * `errorOutput`/`errorTimestamp`. Verified empirically (2026-05-13): for both `LOST_SYNC`
+ * and `FRAME_CRC_MISMATCH`, the reference decoder drops the bad/lost-sync frame before
+ * delivering it, so `delivered` exactly equals the offset reported in stderr.
+ */
+function predictDeliveredSamples(
+	errorOutput: string,
+	errorTimestamp: null | string,
+	claimedSamples: number,
+): number {
+	if (errorTimestamp) {
+		// `"sample 602112"` → 602112
+		const n = Number(errorTimestamp.slice('sample '.length));
+		if (Number.isFinite(n)) return n;
+	}
+	// No offset reported. Two known cases:
+	//   - MD5 mismatch only: file decoded fully, hash didn't match → delivered ≈ claimed.
+	//     `classifyRecovery` then rejects with "decodes fully, no truncation".
+	//   - Structural error (UNPARSEABLE_STREAM, etc.) that didn't yield an offset: the
+	//     decoder didn't produce usable audio → delivered = 0 → rejected as such.
+	if (errorOutput.includes('MD5 signature mismatch')) return claimedSamples;
+	return 0;
+}

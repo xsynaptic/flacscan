@@ -14,11 +14,17 @@ export interface FileRow {
 	first_seen_at: string;
 	last_result: FileStatus;
 	last_verified_at: null | string;
+	recovery_attempted_at: null | string;
+	recovery_detail: null | string;
+	recovery_lost_samples: null | number;
+	recovery_result: null | RecoveryResult;
 	title: null | string;
 	updated_at: string;
 }
 
 export type FileStatus = 'corrupt' | 'healthy' | 'pending';
+
+export type RecoveryResult = 'recovered' | 'unsuitable';
 
 export interface UnreadableFileRow {
 	current_path: string;

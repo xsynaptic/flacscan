@@ -7,13 +7,14 @@ const ERROR_CODE_PATTERN = /error code \d+:(\S+)/;
 export function printCorruptFile(
 	spinner: { clear(): void },
 	filePath: string,
-	result: { errorOutput: string; errorTimestamp: null | string; severity: ErrorSeverity },
+	severity: ErrorSeverity,
+	result: { errorOutput: string; errorTimestamp: null | string },
 ): void {
-	const severityColor = result.severity === 'recoverable' ? chalk.yellow : chalk.red;
+	const severityColor = severity === 'recoverable' ? chalk.yellow : chalk.red;
 	const firstError = extractFirstError(result.errorOutput);
 	const location = result.errorTimestamp ? ` (${result.errorTimestamp})` : '';
 	spinner.clear();
-	console.log(severityColor(`  CORRUPT [${result.severity}] ${filePath}`));
+	console.log(severityColor(`  CORRUPT [${severity}] ${filePath}`));
 	console.log(chalk.dim(`          ${firstError}${location}`));
 }
 
