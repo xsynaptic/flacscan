@@ -245,7 +245,7 @@ describe('upsertFile', () => {
 			last_result: 'corrupt',
 		});
 
-		// Re-discovered with different stats means the bytes changed — the prior verdict is stale.
+		// Re-discovered with different stats means the bytes changed; the prior verdict is stale.
 		upsertFile(db, {
 			current_path: '/music/test.flac',
 			file_mtime: '2025-06-01T00:00:00.000Z',
