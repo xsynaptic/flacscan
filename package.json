@@ -1,6 +1,6 @@
 {
 	"name": "flacscan",
-	"version": "2.0.0",
+	"version": "2.1.0",
 	"description": "Periodic integrity verification for large FLAC collections",
 	"keywords": [
 		"flac",
@@ -14,7 +14,7 @@
 		"flacscan": "./dist/index.mjs"
 	},
 	"engines": {
-		"node": ">=22"
+		"node": ">=22.22.2"
 	},
 	"repository": {
 		"type": "git",
@@ -37,28 +37,28 @@
 		"prepublishOnly": "pnpm build"
 	},
 	"dependencies": {
-		"better-sqlite3": "^12.9.0",
+		"better-sqlite3": "^12.10.0",
 		"chalk": "^5.4.1",
 		"citty": "^0.2.2",
 		"ora": "^9.4.0",
-		"yaml": "^2.8.4"
+		"yaml": "^2.9.0"
 	},
 	"devDependencies": {
 		"@eslint/js": "^9.39.4",
 		"@types/better-sqlite3": "^7.6.13",
-		"@types/node": "^25.6.2",
+		"@types/node": "^25.9.1",
 		"eslint": "^9.39.4",
 		"eslint-config-prettier": "^10.1.8",
 		"eslint-plugin-perfectionist": "^5.9.0",
 		"eslint-plugin-unicorn": "^64.0.0",
 		"jiti": "^2.7.0",
-		"knip": "^6.12.2",
+		"knip": "^6.14.2",
 		"prettier": "^3.8.3",
-		"tsdown": "^0.22.0",
-		"tsx": "^4.19.3",
+		"tsdown": "^0.22.1",
+		"tsx": "^4.22.3",
 		"typescript": "^6.0.3",
-		"typescript-eslint": "^8.59.2",
-		"vitest": "^4.1.5"
+		"typescript-eslint": "^8.60.0",
+		"vitest": "^4.1.7"
 	},
 	"pnpm": {
 		"onlyBuiltDependencies": [
