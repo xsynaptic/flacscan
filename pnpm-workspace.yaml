@@ -1,3 +1,8 @@
+# Intended to mitigate supply chain attacks
+minimumReleaseAge: 1440
+verifyDepsBeforeRun: error
+strictDepBuilds: true
+
 allowBuilds:
   better-sqlite3: true
   esbuild: true
