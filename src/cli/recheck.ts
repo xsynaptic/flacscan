@@ -1,3 +1,5 @@
+import type Database from 'better-sqlite3';
+
 import chalk from 'chalk';
 import { defineCommand } from 'citty';
 import fs from 'node:fs';
@@ -10,21 +12,20 @@ import { openDatabase } from '../database/connection.js';
 import {
 	deleteFileByPath,
 	deleteUnreadableByPath,
+	findFileByPath,
 	getAllUnreadableFiles,
 	getCorruptFiles,
-	updateMetadata,
-	updateVerificationResult,
+	upsertFile,
 	upsertUnreadableFile,
 } from '../database/queries.js';
 import { checkMountedPaths } from '../discovery.js';
-import { extractMetadata } from '../metadata.js';
 import { ensureBinary } from '../shell.js';
 import { flacVerifier } from '../verifiers/flac/verify.js';
-import { classifyCorruptFile } from '../verifiers/severity.js';
 import { FlacScanError } from './errors.js';
 import { printCorruptFile } from './format-corrupt.js';
 import { installShutdownHandler, isShuttingDown, processPool } from './process-pool.js';
 import { sharedArguments } from './shared-arguments.js';
+import { verifyAndRecord } from './verify-and-record.js';
 
 type RecheckItem =
 	| { row: FileRow; source: 'files' }
@@ -85,74 +86,25 @@ export const recheckCommand = defineCommand({
 						stats.pruned++;
 						spinner.clear();
 						console.log(chalk.blue(`  PRUNED ${filePath}`));
-					} else if (item.source === 'files') {
-						if (
-							!item.row.artist &&
-							!item.row.title &&
-							!item.row.album &&
-							!item.row.date &&
-							!item.row.duration
-						) {
-							const metadata = await extractMetadata(filePath);
-							if (metadata) {
-								updateMetadata(db, filePath, metadata);
-							}
-						}
+						processed++;
+						spinner.text = `Rechecking: ${String(processed)}/${String(items.length)} files`;
+						return;
+					}
 
-						const result = await flacVerifier.verify(filePath);
+					const file = item.source === 'files' ? item.row : promoteUnreadable(db, filePath);
+					if (!file) return;
 
-						if (result.status === 'interrupted') {
-							return;
-						}
+					const outcome = await verifyAndRecord(db, config, flacVerifier, file, { fix: false });
 
-						if (result.status === 'healthy') {
-							updateVerificationResult(db, filePath, { last_result: 'healthy' });
-							stats.healthy++;
-							spinner.clear();
-							console.log(chalk.green(`  HEALTHY ${filePath}`));
-						} else {
-							const severity = await classifyCorruptFile(
-								filePath,
-								result.errorOutput,
-								result.errorTimestamp,
-								config,
-							);
-							updateVerificationResult(db, filePath, {
-								error_output: result.errorOutput,
-								error_severity: severity,
-								error_timestamp: result.errorTimestamp,
-								last_result: 'corrupt',
-							});
+					if (outcome.kind === 'interrupted') return;
 
-							stats.corrupt++;
-							printCorruptFile(spinner, filePath, severity, result);
-						}
+					if (outcome.kind === 'corrupt') {
+						stats.corrupt++;
+						printCorruptFile(spinner, filePath, outcome.severity, outcome);
 					} else {
-						const result = await flacVerifier.verify(filePath);
-
-						if (result.status === 'interrupted') {
-							return;
-						}
-
-						if (result.status === 'healthy') {
-							deleteUnreadableByPath(db, filePath);
-							stats.healthy++;
-							spinner.clear();
-							console.log(chalk.green(`  HEALTHY ${filePath}`));
-						} else {
-							const severity = await classifyCorruptFile(
-								filePath,
-								result.errorOutput,
-								result.errorTimestamp,
-								config,
-							);
-							upsertUnreadableFile(db, {
-								current_path: filePath,
-								error_output: result.errorOutput,
-							});
-							stats.corrupt++;
-							printCorruptFile(spinner, filePath, severity, result);
-						}
+						stats.healthy++;
+						spinner.clear();
+						console.log(chalk.green(`  HEALTHY ${filePath}`));
 					}
 
 					processed++;
@@ -185,3 +137,22 @@ export const recheckCommand = defineCommand({
 		}
 	},
 });
+
+// A previously-unreadable file that can be statted again is readable now
+// Move it into the files table and let it follow the same verdict path as everything else
+function promoteUnreadable(db: Database.Database, filePath: string): FileRow | undefined {
+	let stat: fs.Stats;
+	try {
+		stat = fs.statSync(filePath);
+	} catch (error) {
+		upsertUnreadableFile(db, { current_path: filePath, error_output: String(error) });
+		return undefined;
+	}
+	upsertFile(db, {
+		current_path: filePath,
+		file_mtime: stat.mtime.toISOString(),
+		file_size: stat.size,
+	});
+	deleteUnreadableByPath(db, filePath);
+	return findFileByPath(db, filePath);
+}

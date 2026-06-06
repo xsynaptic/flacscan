@@ -7,18 +7,11 @@ import ora from 'ora';
 import type { FlacScanConfig } from '../config/types.js';
 import type { FormatVerifier } from '../verifiers/types.js';
 
-import {
-	deleteFileByPath,
-	getFilesNeedingVerification,
-	updateMetadata,
-	updateVerificationResult,
-	upsertFile,
-} from '../database/queries.js';
+import { deleteFileByPath, getFilesNeedingVerification } from '../database/queries.js';
 import { logCorruption, logFixApplied, logFixDetected, logFixFailed } from '../logging/scan-log.js';
-import { extractMetadata } from '../metadata.js';
-import { classifyCorruptFile } from '../verifiers/severity.js';
 import { printCorruptFile } from './format-corrupt.js';
 import { isShuttingDown, processPool } from './process-pool.js';
+import { verifyAndRecord } from './verify-and-record.js';
 
 interface VerificationStats {
 	corrupt: number;
@@ -60,8 +53,6 @@ export async function runVerification(
 	};
 	let verified = 0;
 
-	const fixer = verifier.fixer;
-
 	await processPool(filesToVerify, config.parallelism, async (file) => {
 		if (!fs.existsSync(file.current_path)) {
 			deleteFileByPath(db, file.current_path);
@@ -73,103 +64,39 @@ export async function runVerification(
 			return;
 		}
 
-		try {
-			const result = await verifier.verify(file.current_path);
+		const outcome = await verifyAndRecord(db, config, verifier, file, { fix: config.fix });
 
-			if (result.status === 'interrupted') {
-				return;
-			}
+		if (outcome.kind === 'interrupted') return;
 
-			if (result.status === 'healthy') {
-				updateVerificationResult(db, file.current_path, { last_result: 'healthy' });
-				stats.healthy++;
-			} else {
-				const fixDetected = fixer?.detect(result.errorOutput);
-
-				if (fixDetected && fixer && config.fix) {
-					const fixResult = await fixer.fix(file.current_path);
-					if (fixResult.ok) {
-						const recheck = await verifier.verify(file.current_path);
-						if (recheck.status === 'healthy') {
-							// Update mtime/size after in-place modification
-							const stat = fs.statSync(file.current_path);
-							upsertFile(db, {
-								current_path: file.current_path,
-								file_mtime: stat.mtime.toISOString(),
-								file_size: stat.size,
-							});
-							updateVerificationResult(db, file.current_path, { last_result: 'healthy' });
-							logFixApplied(config.log_path, file.current_path, fixer.label);
-							stats.fixed++;
-							spinner.clear();
-							console.log(chalk.green(`  ${fixer.label}_FIXED ${file.current_path}`));
-							console.log(chalk.dim(`          Stripped ${fixer.label} tags, verification passed`));
-							verified++;
-							spinner.text = `Verifying: ${String(verified)}/${String(filesToVerify.length)} files`;
-							return;
-						}
-						// Still corrupt after stripping; fall through to log as corrupt
-					} else {
-						logFixFailed(
-							config.log_path,
-							file.current_path,
-							fixer.label,
-							fixResult.error ?? 'unknown',
-						);
-						spinner.clear();
-						console.log(chalk.red(`  ${fixer.label}_FIX_FAILED ${file.current_path}`));
-						console.log(chalk.dim(`          ${fixResult.error ?? 'unknown'}`));
-					}
-				} else if (fixDetected && fixer) {
-					logFixDetected(config.log_path, file.current_path, fixer.label);
-					spinner.clear();
-					console.log(chalk.yellow(`  ${fixer.label}_DETECTED ${file.current_path}`));
-					console.log(
-						chalk.dim(`          Non-standard ${fixer.label} tags found, use --fix to strip`),
-					);
-				}
-
-				const severity = await classifyCorruptFile(
-					file.current_path,
-					result.errorOutput,
-					result.errorTimestamp,
-					config,
+		if (outcome.kind === 'healthy') {
+			stats.healthy++;
+		} else if (outcome.kind === 'fixed') {
+			logFixApplied(config.log_path, file.current_path, outcome.label);
+			spinner.clear();
+			console.log(chalk.green(`  ${outcome.label}_FIXED ${file.current_path}`));
+			console.log(chalk.dim(`          Stripped ${outcome.label} tags, verification passed`));
+			stats.fixed++;
+		} else {
+			if (outcome.fix?.state === 'failed') {
+				logFixFailed(config.log_path, file.current_path, outcome.fix.label, outcome.fix.error);
+				spinner.clear();
+				console.log(chalk.red(`  ${outcome.fix.label}_FIX_FAILED ${file.current_path}`));
+				console.log(chalk.dim(`          ${outcome.fix.error}`));
+			} else if (outcome.fix?.state === 'detected') {
+				logFixDetected(config.log_path, file.current_path, outcome.fix.label);
+				spinner.clear();
+				console.log(chalk.yellow(`  ${outcome.fix.label}_DETECTED ${file.current_path}`));
+				console.log(
+					chalk.dim(`          Non-standard ${outcome.fix.label} tags found, use --fix to strip`),
 				);
-
-				updateVerificationResult(db, file.current_path, {
-					error_output: result.errorOutput,
-					error_severity: severity,
-					error_timestamp: result.errorTimestamp,
-					last_result: 'corrupt',
-				});
-
-				const metadata = await extractMetadata(file.current_path);
-				if (metadata) {
-					updateMetadata(db, file.current_path, metadata);
-				}
-
-				logCorruption(
-					config.log_path,
-					severity,
-					file.current_path,
-					result.errorOutput.replaceAll('\n', ' '),
-				);
-
-				printCorruptFile(spinner, file.current_path, severity, result);
-
-				stats.corrupt++;
-				stats.exitCode = 1;
 			}
-		} catch (error) {
-			if (isShuttingDown()) {
-				return;
-			}
-
-			updateVerificationResult(db, file.current_path, {
-				error_output: String(error),
-				error_severity: 'unknown',
-				last_result: 'corrupt',
-			});
+			logCorruption(
+				config.log_path,
+				outcome.severity,
+				file.current_path,
+				outcome.errorOutput.replaceAll('\n', ' '),
+			);
+			printCorruptFile(spinner, file.current_path, outcome.severity, outcome);
 			stats.corrupt++;
 			stats.exitCode = 1;
 		}
