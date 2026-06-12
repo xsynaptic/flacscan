@@ -4,37 +4,39 @@ import type { FlacMetadata } from '../metadata.js';
 import type { ErrorSeverity } from '../verifiers/types.js';
 import type { FileRow, FileStatus, RecoveryResult, UnreadableFileRow } from './types.js';
 
+// Prepared statements are cached per database handle; re-preparing on every call
+// dominates discovery cost on large collections
+const statementCaches = new WeakMap<Database.Database, Map<string, Database.Statement>>();
+
 export function clearRecoveryOutcome(database: Database.Database, currentPath: string) {
-	database
-		.prepare(
-			`UPDATE files SET recovery_attempted_at = NULL, recovery_result = NULL, recovery_lost_samples = NULL, recovery_detail = NULL WHERE current_path = ?`,
-		)
-		.run(currentPath);
+	prepareCached(
+		database,
+		`UPDATE files SET recovery_attempted_at = NULL, recovery_result = NULL, recovery_lost_samples = NULL, recovery_detail = NULL WHERE current_path = ?`,
+	).run(currentPath);
 }
 
 export function countRecoveryAttempted(database: Database.Database): number {
 	return (
-		database
-			.prepare(
-				`SELECT COUNT(*) AS count FROM files WHERE last_result = 'corrupt' AND recovery_attempted_at IS NOT NULL`,
-			)
-			.get() as { count: number }
+		prepareCached(
+			database,
+			`SELECT COUNT(*) AS count FROM files WHERE last_result = 'corrupt' AND recovery_attempted_at IS NOT NULL`,
+		).get() as { count: number }
 	).count;
 }
 
 export function deleteFileByPath(database: Database.Database, currentPath: string) {
-	database.prepare(`DELETE FROM files WHERE current_path = ?`).run(currentPath);
+	prepareCached(database, `DELETE FROM files WHERE current_path = ?`).run(currentPath);
 }
 
 export function deleteUnreadableByPath(database: Database.Database, currentPath: string) {
-	database.prepare(`DELETE FROM unreadable_files WHERE current_path = ?`).run(currentPath);
+	prepareCached(database, `DELETE FROM unreadable_files WHERE current_path = ?`).run(currentPath);
 }
 
 export function findFileByPath(
 	database: Database.Database,
 	currentPath: string,
 ): FileRow | undefined {
-	return database.prepare(`SELECT * FROM files WHERE current_path = ?`).get(currentPath) as
+	return prepareCached(database, `SELECT * FROM files WHERE current_path = ?`).get(currentPath) as
 		| FileRow
 		| undefined;
 }
@@ -43,32 +45,33 @@ export function findUnreadableByPath(
 	database: Database.Database,
 	currentPath: string,
 ): undefined | UnreadableFileRow {
-	return database
-		.prepare(`SELECT * FROM unreadable_files WHERE current_path = ?`)
-		.get(currentPath) as undefined | UnreadableFileRow;
+	return prepareCached(database, `SELECT * FROM unreadable_files WHERE current_path = ?`).get(
+		currentPath,
+	) as undefined | UnreadableFileRow;
 }
 
 export function getAllUnreadableFiles(database: Database.Database): UnreadableFileRow[] {
-	return database
-		.prepare(`SELECT * FROM unreadable_files ORDER BY current_path`)
-		.all() as UnreadableFileRow[];
+	return prepareCached(
+		database,
+		`SELECT * FROM unreadable_files ORDER BY current_path`,
+	).all() as UnreadableFileRow[];
 }
 
 export function getCorruptFiles(database: Database.Database): FileRow[] {
-	return database
-		.prepare(`SELECT * FROM files WHERE last_result = 'corrupt' ORDER BY current_path`)
-		.all() as FileRow[];
+	return prepareCached(
+		database,
+		`SELECT * FROM files WHERE last_result = 'corrupt' ORDER BY current_path`,
+	).all() as FileRow[];
 }
 
 export function getCorruptFilesBySeverity(
 	database: Database.Database,
 	severity: ErrorSeverity,
 ): FileRow[] {
-	return database
-		.prepare(
-			`SELECT * FROM files WHERE last_result = 'corrupt' AND error_severity = ? ORDER BY current_path`,
-		)
-		.all(severity) as FileRow[];
+	return prepareCached(
+		database,
+		`SELECT * FROM files WHERE last_result = 'corrupt' AND error_severity = ? ORDER BY current_path`,
+	).all(severity) as FileRow[];
 }
 
 export function getFilesNeedingVerification(
@@ -84,9 +87,9 @@ export function getFilesNeedingVerification(
 	const dirClauses = directories.map(() => String.raw`current_path LIKE ? ESCAPE '\'`).join(' OR ');
 	const escapedDirs = directories.map((d) => escapeLikePattern(d) + '%');
 
-	return database
-		.prepare(
-			`
+	return prepareCached(
+		database,
+		`
     SELECT * FROM files
     WHERE (${dirClauses})
       AND (last_result = 'pending'
@@ -94,8 +97,7 @@ export function getFilesNeedingVerification(
     ORDER BY last_verified_at ASC NULLS FIRST
     LIMIT ?
   `,
-		)
-		.all(...escapedDirs, cutoff, batchSize) as FileRow[];
+	).all(...escapedDirs, cutoff, batchSize) as FileRow[];
 }
 
 export function getRecoveryCandidates(
@@ -111,15 +113,17 @@ export function getRecoveryCandidates(
 		clauses.push(`error_severity = ?`);
 		params.push(options.severity);
 	}
-	return database
-		.prepare(`SELECT * FROM files WHERE ${clauses.join(' AND ')} ORDER BY current_path`)
-		.all(...params) as FileRow[];
+	return prepareCached(
+		database,
+		`SELECT * FROM files WHERE ${clauses.join(' AND ')} ORDER BY current_path`,
+	).all(...params) as FileRow[];
 }
 
 export function getStats(database: Database.Database) {
-	const resultCounts = database
-		.prepare(`SELECT last_result, COUNT(*) as count FROM files GROUP BY last_result`)
-		.all() as { count: number; last_result: FileStatus }[];
+	const resultCounts = prepareCached(
+		database,
+		`SELECT last_result, COUNT(*) as count FROM files GROUP BY last_result`,
+	).all() as { count: number; last_result: FileStatus }[];
 
 	const countsByResult: Record<string, number> = {};
 	let total = 0;
@@ -129,22 +133,20 @@ export function getStats(database: Database.Database) {
 	}
 
 	const unreadable = (
-		database.prepare(`SELECT COUNT(*) as count FROM unreadable_files`).get() as {
+		prepareCached(database, `SELECT COUNT(*) as count FROM unreadable_files`).get() as {
 			count: number;
 		}
 	).count;
 
-	const severityBreakdown = database
-		.prepare(
-			`SELECT error_severity, COUNT(*) as count FROM files WHERE last_result = 'corrupt' GROUP BY error_severity`,
-		)
-		.all() as { count: number; error_severity: ErrorSeverity | null }[];
+	const severityBreakdown = prepareCached(
+		database,
+		`SELECT error_severity, COUNT(*) as count FROM files WHERE last_result = 'corrupt' GROUP BY error_severity`,
+	).all() as { count: number; error_severity: ErrorSeverity | null }[];
 
-	const recoveryBreakdown = database
-		.prepare(
-			`SELECT recovery_result, COUNT(*) as count FROM files WHERE last_result = 'corrupt' GROUP BY recovery_result`,
-		)
-		.all() as { count: number; recovery_result: null | RecoveryResult }[];
+	const recoveryBreakdown = prepareCached(
+		database,
+		`SELECT recovery_result, COUNT(*) as count FROM files WHERE last_result = 'corrupt' GROUP BY recovery_result`,
+	).all() as { count: number; recovery_result: null | RecoveryResult }[];
 
 	return {
 		corrupt: countsByResult['corrupt'] ?? 0,
@@ -163,9 +165,9 @@ export function recordRecoveryOutcome(
 	outcome: { detail: null | string; lostSamples: null | number; result: RecoveryResult },
 ) {
 	const now = new Date().toISOString();
-	database
-		.prepare(
-			`
+	prepareCached(
+		database,
+		`
     UPDATE files SET
       recovery_attempted_at = ?,
       recovery_result = ?,
@@ -174,8 +176,7 @@ export function recordRecoveryOutcome(
       updated_at = ?
     WHERE current_path = ?
   `,
-		)
-		.run(now, outcome.result, outcome.lostSamples, outcome.detail, now, currentPath);
+	).run(now, outcome.result, outcome.lostSamples, outcome.detail, now, currentPath);
 }
 
 export function updateMetadata(
@@ -184,9 +185,9 @@ export function updateMetadata(
 	metadata: FlacMetadata,
 ) {
 	const now = new Date().toISOString();
-	database
-		.prepare(
-			`
+	prepareCached(
+		database,
+		`
     UPDATE files SET
       artist = ?,
       title = ?,
@@ -196,16 +197,15 @@ export function updateMetadata(
       updated_at = ?
     WHERE current_path = ?
   `,
-		)
-		.run(
-			metadata.artist,
-			metadata.title,
-			metadata.album,
-			metadata.date,
-			metadata.duration,
-			now,
-			currentPath,
-		);
+	).run(
+		metadata.artist,
+		metadata.title,
+		metadata.album,
+		metadata.date,
+		metadata.duration,
+		now,
+		currentPath,
+	);
 }
 
 export function updateVerificationResult(
@@ -219,9 +219,9 @@ export function updateVerificationResult(
 	},
 ) {
 	const now = new Date().toISOString();
-	database
-		.prepare(
-			`
+	prepareCached(
+		database,
+		`
     UPDATE files SET
       last_verified_at = ?,
       last_result = ?,
@@ -231,16 +231,15 @@ export function updateVerificationResult(
       updated_at = ?
     WHERE current_path = ?
   `,
-		)
-		.run(
-			now,
-			result.last_result,
-			result.error_severity ?? null,
-			result.error_output ?? null,
-			result.error_timestamp ?? null,
-			now,
-			currentPath,
-		);
+	).run(
+		now,
+		result.last_result,
+		result.error_severity ?? null,
+		result.error_output ?? null,
+		result.error_timestamp ?? null,
+		now,
+		currentPath,
+	);
 }
 
 export function upsertFile(
@@ -252,9 +251,9 @@ export function upsertFile(
 	},
 ) {
 	const now = new Date().toISOString();
-	database
-		.prepare(
-			`
+	prepareCached(
+		database,
+		`
     INSERT INTO files (current_path, file_size, file_mtime, first_seen_at, updated_at)
     VALUES (?, ?, ?, ?, ?)
     ON CONFLICT (current_path) DO UPDATE SET
@@ -266,8 +265,7 @@ export function upsertFile(
       last_result = 'pending',
       last_verified_at = NULL
   `,
-		)
-		.run(file.current_path, file.file_size, file.file_mtime, now, now);
+	).run(file.current_path, file.file_size, file.file_mtime, now, now);
 }
 
 export function upsertUnreadableFile(
@@ -275,17 +273,16 @@ export function upsertUnreadableFile(
 	file: { current_path: string; error_output: string },
 ) {
 	const now = new Date().toISOString();
-	database
-		.prepare(
-			`
+	prepareCached(
+		database,
+		`
     INSERT INTO unreadable_files (current_path, error_output, first_seen_at, updated_at)
     VALUES (?, ?, ?, ?)
     ON CONFLICT (current_path) DO UPDATE SET
       error_output = excluded.error_output,
       updated_at = excluded.updated_at
   `,
-		)
-		.run(file.current_path, file.error_output, now, now);
+	).run(file.current_path, file.error_output, now, now);
 }
 
 function escapeLikePattern(value: string): string {
@@ -293,4 +290,18 @@ function escapeLikePattern(value: string): string {
 		.replaceAll('\\', '\\\\')
 		.replaceAll('%', String.raw`\%`)
 		.replaceAll('_', String.raw`\_`);
+}
+
+function prepareCached(database: Database.Database, sql: string): Database.Statement {
+	let cache = statementCaches.get(database);
+	if (cache === undefined) {
+		cache = new Map();
+		statementCaches.set(database, cache);
+	}
+	let statement = cache.get(sql);
+	if (statement === undefined) {
+		statement = database.prepare(sql);
+		cache.set(sql, statement);
+	}
+	return statement;
 }

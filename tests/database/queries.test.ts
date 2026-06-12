@@ -490,3 +490,38 @@ describe('recovery outcomes', () => {
 		).toEqual(['/music/c.flac']);
 	});
 });
+
+describe('statement caching', () => {
+	it('keeps statements isolated per database handle', () => {
+		const otherDb = new BetterSqlite3(':memory:');
+		initializeSchema(otherDb);
+		upsertFile(db, { current_path: '/music/first.flac', file_mtime: null, file_size: 1 });
+		upsertFile(otherDb, { current_path: '/music/second.flac', file_mtime: null, file_size: 2 });
+
+		expect(findFileByPath(db, '/music/first.flac')?.file_size).toBe(1);
+		expect(findFileByPath(db, '/music/second.flac')).toBeUndefined();
+		expect(findFileByPath(otherDb, '/music/second.flac')?.file_size).toBe(2);
+		expect(findFileByPath(otherDb, '/music/first.flac')).toBeUndefined();
+
+		otherDb.close();
+	});
+
+	it('re-runs a cached statement on repeated calls', () => {
+		upsertFile(db, { current_path: '/music/track.flac', file_mtime: null, file_size: 1 });
+		upsertFile(db, { current_path: '/music/track.flac', file_mtime: null, file_size: 2 });
+
+		expect(findFileByPath(db, '/music/track.flac')?.file_size).toBe(2);
+	});
+
+	it('does not resurrect statements from a closed handle', () => {
+		const closedDb = new BetterSqlite3(':memory:');
+		initializeSchema(closedDb);
+		findFileByPath(closedDb, '/music/track.flac');
+		closedDb.close();
+
+		const freshDb = new BetterSqlite3(':memory:');
+		initializeSchema(freshDb);
+		expect(findFileByPath(freshDb, '/music/track.flac')).toBeUndefined();
+		freshDb.close();
+	});
+});
