@@ -71,7 +71,13 @@ export async function verifyAndRecord(
 		if (fixResult.ok) {
 			const recheck = await verifier.verify(filePath);
 			if (recheck.status === 'healthy') {
-				const stat = fs.statSync(filePath);
+				let stat: fs.Stats;
+				try {
+					stat = fs.statSync(filePath);
+				} catch {
+					// File vanished after the fix; the next scan will prune or rediscover it
+					return { kind: 'interrupted' };
+				}
 				upsertFile(db, {
 					current_path: filePath,
 					file_mtime: stat.mtime.toISOString(),

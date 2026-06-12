@@ -7,8 +7,6 @@ import ora from 'ora';
 
 import type { FileRow, UnreadableFileRow } from '../database/types.js';
 
-import { loadConfig } from '../config/loader.js';
-import { openDatabase } from '../database/connection.js';
 import {
 	deleteFileByPath,
 	deleteUnreadableByPath,
@@ -21,9 +19,9 @@ import {
 import { checkMountedPaths } from '../discovery.js';
 import { ensureBinary } from '../shell.js';
 import { flacVerifier } from '../verifiers/flac/verify.js';
-import { FlacScanError } from './errors.js';
 import { printCorruptFile } from './format-corrupt.js';
 import { installShutdownHandler, isShuttingDown, processPool } from './process-pool.js';
+import { runCommand } from './run-command.js';
 import { sharedArguments } from './shared-arguments.js';
 import { verifyAndRecord } from './verify-and-record.js';
 
@@ -40,16 +38,17 @@ export const recheckCommand = defineCommand({
 		name: 'recheck',
 	},
 	async run({ args }) {
-		try {
-			installShutdownHandler();
-			const config = loadConfig(args);
-			for (const bin of flacVerifier.requiredBinaries) {
-				await ensureBinary(bin.name, bin.hint);
-			}
-
-			const db = openDatabase(config.db_path);
-
-			try {
+		installShutdownHandler();
+		await runCommand(
+			args,
+			{
+				async prepare() {
+					for (const bin of flacVerifier.requiredBinaries) {
+						await ensureBinary(bin.name, bin.hint);
+					}
+				},
+			},
+			async (db, config) => {
 				const mountCheck = checkMountedPaths(config.directories);
 
 				const allItems: RecheckItem[] = [
@@ -124,17 +123,8 @@ export const recheckCommand = defineCommand({
 				}
 
 				process.exitCode = stats.corrupt > 0 ? 1 : 0;
-			} finally {
-				db.close();
-			}
-		} catch (error) {
-			if (error instanceof FlacScanError) {
-				console.error(error.message);
-				process.exitCode = error.exitCode;
-				return;
-			}
-			throw error;
-		}
+			},
+		);
 	},
 });
 

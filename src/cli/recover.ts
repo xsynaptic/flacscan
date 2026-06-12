@@ -11,8 +11,6 @@ import type { FileRow } from '../database/types.js';
 import type { ErrorSeverity } from '../verifiers/types.js';
 import type { AttemptResult, RecoverItem } from './recover-attempt.js';
 
-import { loadConfig } from '../config/loader.js';
-import { openDatabase } from '../database/connection.js';
 import { countRecoveryAttempted, getRecoveryCandidates } from '../database/queries.js';
 import { checkMountedPaths } from '../discovery.js';
 import { findSpaceViolations, recoveredFilePath } from '../recovery.js';
@@ -21,6 +19,7 @@ import { FlacScanError } from './errors.js';
 import { installShutdownHandler, isShuttingDown, processPool } from './process-pool.js';
 import { attemptRecovery } from './recover-attempt.js';
 import { flacEngine } from './recover-engine.js';
+import { runCommand } from './run-command.js';
 import { sharedArguments } from './shared-arguments.js';
 
 const SEVERITY_FILTERS = [
@@ -69,23 +68,25 @@ export const recoverCommand = defineCommand({
 		name: 'recover',
 	},
 	async run({ args }) {
-		try {
-			installShutdownHandler();
-			await ensureBinary('flac');
-			await ensureBinary('metaflac', 'brew install flac');
+		installShutdownHandler();
 
-			const severity = args.severity as ErrorSeverity | undefined;
-			if (severity !== undefined && !SEVERITY_FILTERS.includes(severity)) {
-				console.error(`Unknown severity: ${severity}`);
-				console.error(`Valid values: ${SEVERITY_FILTERS.join(', ')}`);
-				process.exitCode = 1;
-				return;
-			}
+		const severity = args.severity as ErrorSeverity | undefined;
+		if (severity !== undefined && !SEVERITY_FILTERS.includes(severity)) {
+			console.error(`Unknown severity: ${severity}`);
+			console.error(`Valid values: ${SEVERITY_FILTERS.join(', ')}`);
+			process.exitCode = 1;
+			return;
+		}
 
-			const config = loadConfig(args);
-			const db = openDatabase(config.db_path);
-
-			try {
+		await runCommand(
+			args,
+			{
+				async prepare() {
+					await ensureBinary('flac');
+					await ensureBinary('metaflac', 'brew install flac');
+				},
+			},
+			async (db, config) => {
 				const alreadyAttempted = countRecoveryAttempted(db);
 				if (alreadyAttempted > 0) {
 					console.log(
@@ -106,17 +107,8 @@ export const recoverCommand = defineCommand({
 				if (args.output && reportEntries.length > 0) {
 					writeReport(args.output, reportEntries);
 				}
-			} finally {
-				db.close();
-			}
-		} catch (error) {
-			if (error instanceof FlacScanError) {
-				console.error(error.message);
-				process.exitCode = error.exitCode;
-				return;
-			}
-			throw error;
-		}
+			},
+		);
 	},
 });
 

@@ -1,14 +1,12 @@
 import { defineCommand } from 'citty';
 import ora from 'ora';
 
-import { loadConfig } from '../config/loader.js';
-import { openDatabase } from '../database/connection.js';
 import { discoverFiles } from '../discovery.js';
 import { logScanComplete, logScanStart } from '../logging/scan-log.js';
 import { ensureBinary } from '../shell.js';
 import { flacVerifier } from '../verifiers/flac/verify.js';
-import { FlacScanError } from './errors.js';
 import { installShutdownHandler, isShuttingDown } from './process-pool.js';
+import { runCommand } from './run-command.js';
 import { runDiscovery } from './scan-discover.js';
 import { runVerification } from './scan-verify.js';
 import { sharedArguments } from './shared-arguments.js';
@@ -42,21 +40,22 @@ export const scanCommand = defineCommand({
 		name: 'scan',
 	},
 	async run({ args }) {
-		try {
-			installShutdownHandler();
-			const config = loadConfig(args);
-			for (const bin of flacVerifier.requiredBinaries) {
-				await ensureBinary(bin.name, bin.hint);
-			}
-			if (config.fix && flacVerifier.fixer) {
-				for (const bin of flacVerifier.fixer.requiredBinaries) {
-					await ensureBinary(bin.name, bin.hint);
-				}
-			}
-
-			const db = openDatabase(config.db_path);
-
-			try {
+		installShutdownHandler();
+		await runCommand(
+			args,
+			{
+				async prepare(config) {
+					for (const bin of flacVerifier.requiredBinaries) {
+						await ensureBinary(bin.name, bin.hint);
+					}
+					if (config.fix && flacVerifier.fixer) {
+						for (const bin of flacVerifier.fixer.requiredBinaries) {
+							await ensureBinary(bin.name, bin.hint);
+						}
+					}
+				},
+			},
+			async (db, config) => {
 				// File walk
 				const walkSpinner = ora({ discardStdin: false, text: 'Scanning directories...' }).start();
 				const { files, mountCheck } = await discoverFiles(
@@ -108,16 +107,7 @@ export const scanCommand = defineCommand({
 				});
 
 				process.exitCode = verificationStats?.exitCode ?? 0;
-			} finally {
-				db.close();
-			}
-		} catch (error) {
-			if (error instanceof FlacScanError) {
-				console.error(error.message);
-				process.exitCode = error.exitCode;
-				return;
-			}
-			throw error;
-		}
+			},
+		);
 	},
 });
