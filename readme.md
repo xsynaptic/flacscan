@@ -20,7 +20,7 @@ npm install -g flacscan
 
 ## Config
 
-Copy `flacscan.config.example.yaml` to `~/.flacscan/flacscan.config.yaml` and edit. All settings can be overridden via CLI flags.
+Copy `flacscan.config.example.yaml` to `~/.flacscan/flacscan.config.yaml` and edit. flacscan looks for `./flacscan.config.yaml` in the working directory first, then falls back to `~/.flacscan/flacscan.config.yaml`. All settings can be overridden via CLI flags.
 
 ## Commands
 
@@ -34,20 +34,38 @@ flacscan status                      # collection health overview
 flacscan report                      # dump all known issues (--output file.txt)
 flacscan list                        # file paths to stdout for scripting
 flacscan list critical               # filter: critical, recoverable, unknown, unreadable
+flacscan list --json                 # structured JSON per issue (combine with a filter)
 ```
 
-### Scan flags
+### Flags
 
-| Flag                 | Default                            |
-| -------------------- | ---------------------------------- |
-| `--directory <path>` | from config                        |
-| `--batch-size <n>`   | 100                                |
-| `--parallelism <n>`  | 1                                  |
-| `--rescan-days <n>`  | 90                                 |
-| `--fix`              | off                                |
-| `--db-path <path>`   | `~/.flacscan/flacscan.db`          |
-| `--log-path <path>`  | `~/.flacscan/flacscan.log`         |
-| `--config <path>`    | `~/.flacscan/flacscan.config.yaml` |
+Every command accepts:
+
+| Flag                | Default                                                           |
+| ------------------- | ----------------------------------------------------------------- |
+| `--config <path>`   | `./flacscan.config.yaml`, else `~/.flacscan/flacscan.config.yaml` |
+| `--db-path <path>`  | `~/.flacscan/flacscan.db`                                         |
+| `--log-path <path>` | `~/.flacscan/flacscan.log`                                        |
+
+`scan` adds:
+
+| Flag                 | Default     |
+| -------------------- | ----------- |
+| `--directory <path>` | from config |
+| `--batch-size <n>`   | 100         |
+| `--parallelism <n>`  | 1           |
+| `--rescan-days <n>`  | 90          |
+| `--fix`              | off         |
+
+`recover` adds:
+
+| Flag                      | Default            |
+| ------------------------- | ------------------ |
+| `--max-trailing-loss <s>` | 3                  |
+| `--min-free-bytes <n>`    | 1073741824 (1 GiB) |
+| `--output <path>`         | none               |
+
+`--min-free-bytes` is the free space `recover` keeps on every volume; it aborts before writing anything if any volume would drop below it.
 
 `--fix` strips non-standard ID3 tags (via `id3v2 --delete-all`) when they cause verification failures. If the file passes after stripping, it's marked healthy. Invalid ID3 tags may end up attached to media improperly converted from other formats.
 
@@ -95,7 +113,7 @@ The prediction uses `recover_max_trailing_loss_seconds`, so changing that thresh
 
 - **Path-keyed database** - files are tracked by their full path. Renames or moves are treated as a new file + a stale entry. `recheck` prunes stale entries when the old path no longer exists.
 - **Batch model** - designed for low, predictable resource usage rather than scanning everything at once. A single run touches at most `batch_size` files.
-- **No metadata extraction** - discovery only checks mtime/size via `stat`, not FLAC headers. This keeps discovery fast but means the tool can't detect files that were silently corrupted without a mtime change (_e.g._, bitrot on a filesystem that doesn't update mtime). The periodic rescan interval mitigates this.
+- **No metadata extraction during discovery** - discovery only checks mtime/size via `stat`, not FLAC headers (artist/title/etc. are read later, only for files that turn up corrupt). This keeps discovery fast but means the tool can't detect files that were silently corrupted without a mtime change (_e.g._, bitrot on a filesystem that doesn't update mtime). The periodic rescan interval mitigates this.
 - **Graceful shutdown** - Ctrl+C finishes in-flight workers before exiting. A second Ctrl+C force-quits.
 
 ## License

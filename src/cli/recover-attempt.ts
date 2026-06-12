@@ -40,8 +40,7 @@ export async function attemptRecovery(
 	const { dest, src } = item;
 	const partial = `${dest}.partial`;
 
-	// Build the result and, for a settled verdict (recovered/unsuitable), persist it
-	// Failed/interrupted is left unrecorded so the next run retries
+	// Persist only settled verdicts (recovered/unsuitable); failed/interrupted stays unrecorded so the next run retries
 	function result(
 		kind: AttemptResult['kind'],
 		extra: {

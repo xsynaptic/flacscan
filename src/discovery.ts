@@ -42,7 +42,7 @@ export async function discoverFiles(
 				}
 
 				// A recovered file ("Track [Recovered].flac") is skipped only while its original
-				// still sits in the same directory; once the original is gone it's a normal file.
+				// still sits in the same directory; once the original is gone it's a normal file
 				const originalName = originalNameForRecoveredFile(path.basename(entry));
 				if (
 					originalName !== null &&

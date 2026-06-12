@@ -2,7 +2,7 @@ import type { FlacScanConfig } from '../config/types.js';
 
 import { loadConfig } from '../config/loader.js';
 import { openDatabase } from '../database/connection.js';
-import { FlacScanError } from './errors.js';
+import { FlacScanError } from '../errors.js';
 
 type Database = ReturnType<typeof openDatabase>;
 

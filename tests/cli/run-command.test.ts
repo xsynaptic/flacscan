@@ -5,8 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { FlacScanError } from '../../src/cli/errors.js';
 import { runCommand } from '../../src/cli/run-command.js';
+import { FlacScanError } from '../../src/errors.js';
 
 let tempDir: string;
 

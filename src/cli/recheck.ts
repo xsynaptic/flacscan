@@ -128,8 +128,7 @@ export const recheckCommand = defineCommand({
 	},
 });
 
-// A previously-unreadable file that can be statted again is readable now
-// Move it into the files table and let it follow the same verdict path as everything else
+// A previously-unreadable file that now stats moves to files and follows the normal verdict path
 function promoteUnreadable(db: Database.Database, filePath: string): FileRow | undefined {
 	let stat: fs.Stats;
 	try {

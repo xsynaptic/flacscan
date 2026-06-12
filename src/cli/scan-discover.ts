@@ -72,10 +72,9 @@ export async function runDiscovery(
 					continue;
 				}
 
-				// Check unreadable_files table too
 				const existingUnreadable = findUnreadableByPath(db, filePath);
 				if (existingUnreadable) {
-					// If file hasn't changed since we last tried, skip
+					// Unchanged since the last failed attempt; don't retry
 					const lastAttemptedAt = existingUnreadable.updated_at;
 					if (lastAttemptedAt && mtime <= lastAttemptedAt) {
 						stats.skipped++;
@@ -91,7 +90,7 @@ export async function runDiscovery(
 						file_mtime: mtime,
 						file_size: size,
 					});
-					// The file changed (or is new); any prior `recover` verdict is moot now.
+					// The file changed (or is new); any prior `recover` verdict is moot now
 					if (existing) {
 						clearRecoveryOutcome(db, filePath);
 					}

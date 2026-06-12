@@ -5,7 +5,7 @@ import { parse as parseYaml } from 'yaml';
 
 import type { FlacScanConfig } from './types.js';
 
-import { FlacScanError } from '../cli/errors.js';
+import { FlacScanError } from '../errors.js';
 import { DEFAULT_CONFIG } from './types.js';
 
 interface CliArgs {

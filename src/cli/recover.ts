@@ -13,9 +13,9 @@ import type { AttemptResult, RecoverItem } from './recover-attempt.js';
 
 import { countRecoveryAttempted, getRecoveryCandidates } from '../database/queries.js';
 import { checkMountedPaths } from '../discovery.js';
+import { FlacScanError } from '../errors.js';
 import { findSpaceViolations, recoveredFilePath } from '../recovery.js';
 import { ensureBinary } from '../shell.js';
-import { FlacScanError } from './errors.js';
 import { installShutdownHandler, isShuttingDown, processPool } from './process-pool.js';
 import { attemptRecovery } from './recover-attempt.js';
 import { flacEngine } from './recover-engine.js';
@@ -112,26 +112,8 @@ export const recoverCommand = defineCommand({
 	},
 });
 
-function durationLabel(samples: null | number, sampleRate: number): string {
-	return samples !== null && sampleRate > 0 ? `${(samples / sampleRate).toFixed(1)}s` : '?';
-}
-
-function formatBytes(bytes: number): string {
-	if (bytes < 1024) return `${String(bytes)} B`;
-	const units = ['KiB', 'MiB', 'GiB', 'TiB', 'PiB'];
-	let value = bytes / 1024;
-	let unitIndex = 0;
-	while (value >= 1024 && unitIndex < units.length - 1) {
-		value /= 1024;
-		unitIndex++;
-	}
-	return `${value.toFixed(1)} ${units.at(unitIndex) ?? 'KiB'}`;
-}
-
-// - Mount-check the dirs, build a worklist of reachable corrupt files (skipping recovered/gone)
-// - Run an all-or-nothing per-volume disk-space preflight
-// - Iterate at config.parallelism, stopping a volume once a write would breach its free buffer
-async function runRecovery(
+// Disk-space preflight is all-or-nothing per volume; each volume stops once a write would breach its free buffer
+export async function runRecovery(
 	config: FlacScanConfig,
 	db: Database.Database,
 	rows: FileRow[],
@@ -308,6 +290,22 @@ async function runRecovery(
 	} else {
 		spinner.succeed(`Recovering complete: ${summary}`);
 	}
+}
+
+function durationLabel(samples: null | number, sampleRate: number): string {
+	return samples !== null && sampleRate > 0 ? `${(samples / sampleRate).toFixed(1)}s` : '?';
+}
+
+function formatBytes(bytes: number): string {
+	if (bytes < 1024) return `${String(bytes)} B`;
+	const units = ['KiB', 'MiB', 'GiB', 'TiB', 'PiB'];
+	let value = bytes / 1024;
+	let unitIndex = 0;
+	while (value >= 1024 && unitIndex < units.length - 1) {
+		value /= 1024;
+		unitIndex++;
+	}
+	return `${value.toFixed(1)} ${units.at(unitIndex) ?? 'KiB'}`;
 }
 
 function writeReport(outputFile: string, entries: ReportEntry[]): void {

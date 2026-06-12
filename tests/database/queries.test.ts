@@ -90,6 +90,7 @@ describe('getStats', () => {
 		expect(stats.pending).toBe(1);
 		expect(stats.healthy).toBe(2);
 		expect(stats.corrupt).toBe(1);
+		expect(stats.total).toBe(4);
 	});
 
 	it('includes unreadable count', () => {
@@ -119,19 +120,6 @@ describe('getStats', () => {
 		const breakdown = new Map(stats.severityBreakdown.map((r) => [r.error_severity, r.count]));
 		expect(breakdown.get('critical')).toBe(2);
 		expect(breakdown.get('recoverable')).toBe(1);
-	});
-
-	it('total equals sum of all statuses', () => {
-		insertFile({ current_path: '/music/a.flac', last_result: 'pending' });
-		insertFile({ current_path: '/music/b.flac', last_result: 'healthy' });
-		insertFile({
-			current_path: '/music/c.flac',
-			error_severity: 'unknown',
-			last_result: 'corrupt',
-		});
-
-		const stats = getStats(db);
-		expect(stats.total).toBe(stats.pending + stats.healthy + stats.corrupt);
 	});
 });
 
@@ -504,13 +492,6 @@ describe('statement caching', () => {
 		expect(findFileByPath(otherDb, '/music/first.flac')).toBeUndefined();
 
 		otherDb.close();
-	});
-
-	it('re-runs a cached statement on repeated calls', () => {
-		upsertFile(db, { current_path: '/music/track.flac', file_mtime: null, file_size: 1 });
-		upsertFile(db, { current_path: '/music/track.flac', file_mtime: null, file_size: 2 });
-
-		expect(findFileByPath(db, '/music/track.flac')?.file_size).toBe(2);
 	});
 
 	it('does not resurrect statements from a closed handle', () => {

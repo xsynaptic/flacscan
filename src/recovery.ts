@@ -1,8 +1,5 @@
-// Pure helpers for the `recover` command and its scan-time severity prediction. The
-// accept/reject decision, the `[Recovered].flac` naming convention (also used by discovery
-// to ignore those files while their original is present), the per-volume disk-space check,
-// and the severity classifier that predicts whether `recover` would accept a file given the
-// stderr/offset captured at scan time. No I/O, no dependencies on the CLI layer.
+// Pure helpers for recover and its scan-time severity prediction: the accept/reject rule,
+// `[Recovered].flac` naming, and the per-volume disk-space check. No I/O, no CLI deps.
 
 import path from 'node:path';
 
@@ -121,12 +118,7 @@ export function classifySeverity(input: {
 	return 'critical';
 }
 
-/**
- * For each volume, check it can hold all of its pending recovered files while keeping at
- * least `minFreeBytes` free. Returns one entry per volume that comes up short; an empty
- * array means every volume has room. Pure; callers pass already-gathered sizes and
- * free-space figures.
- */
+/** Per volume, flag any that can't hold its pending recovered files while keeping `minFreeBytes` free; empty array means all fit. Pure. */
 export function findSpaceViolations(
 	items: readonly { dev: number; size: number }[],
 	volumes: readonly { dev: number; freeBytes: number }[],
