@@ -153,17 +153,14 @@ function validateFileConfig(parsed: unknown, configPath: string): Partial<FlacSc
 
 	if ('directories' in source) {
 		const value = source.directories;
+		const directoriesError = `Invalid value for directories in ${configPath} (must be a list of strings)`;
 		if (!Array.isArray(value)) {
-			throw new FlacScanError(
-				`Invalid value for directories in ${configPath} (must be a list of strings)`,
-			);
+			throw new FlacScanError(directoriesError);
 		}
 		const directories: string[] = [];
 		for (const entry of value) {
 			if (typeof entry !== 'string') {
-				throw new FlacScanError(
-					`Invalid value for directories in ${configPath} (must be a list of strings)`,
-				);
+				throw new FlacScanError(directoriesError);
 			}
 			directories.push(expandTilde(entry));
 		}
