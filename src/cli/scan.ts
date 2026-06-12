@@ -63,9 +63,15 @@ export const scanCommand = defineCommand({
 					config.directories,
 					flacVerifier.extensions,
 				);
-				walkSpinner.succeed(
-					`Found ${String(files.length)} FLAC files across ${String(mountCheck.available.length)} path(s)`,
-				);
+				if (mountCheck.available.length === 0) {
+					walkSpinner.warn(
+						`No configured paths are available; skipped: ${mountCheck.skipped.join(', ')}`,
+					);
+				} else {
+					walkSpinner.succeed(
+						`Found ${String(files.length)} FLAC files across ${String(mountCheck.available.length)} path(s)`,
+					);
+				}
 
 				logScanStart(
 					config.log_path,
