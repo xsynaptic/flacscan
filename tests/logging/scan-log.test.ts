@@ -43,7 +43,8 @@ describe('scan-log', () => {
 			path: '/music/bad.flac',
 			severity: 'critical',
 		});
-		expect(Number.isNaN(Date.parse(String(entry.timestamp)))).toBe(false);
+		const timestamp = Date.parse(String(entry.timestamp));
+		expect(Number.isNaN(timestamp)).toBe(false);
 	});
 
 	it('appends a separate line per call', () => {

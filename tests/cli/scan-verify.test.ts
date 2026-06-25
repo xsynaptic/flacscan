@@ -37,7 +37,7 @@ function fakeVerifier(
 		extensions: ['.flac'],
 		requiredBinaries: [],
 		verify,
-		...(fixer ? { fixer } : {}),
+		...(fixer && { fixer }),
 	};
 }
 

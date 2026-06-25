@@ -7,6 +7,8 @@ import { checkMountedPaths, discoverFiles } from '../src/discovery.js';
 
 const EXTENSIONS = ['.flac'];
 
+const byPath = (a: string, b: string) => a.localeCompare(b);
+
 let tempDir: string;
 
 beforeEach(() => {
@@ -42,7 +44,7 @@ describe('discoverFiles', () => {
 
 		const { files } = await discoverFiles([tempDir], EXTENSIONS);
 
-		expect(files.toSorted()).toEqual([top, nested].toSorted());
+		expect(files.toSorted(byPath)).toEqual([top, nested].toSorted(byPath));
 	});
 
 	it('matches extensions case-insensitively and excludes non-matching files', async () => {

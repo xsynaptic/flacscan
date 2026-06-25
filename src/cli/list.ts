@@ -103,7 +103,6 @@ export const listCommand = defineCommand({
 	async run({ args }) {
 		installPipeHandler();
 		const filter = args.filter as Filter | undefined;
-		const jsonOutput = args.json === true;
 
 		if (filter && !VALID_FILTERS.includes(filter)) {
 			console.error(`Unknown filter: ${filter}`);
@@ -111,6 +110,8 @@ export const listCommand = defineCommand({
 			process.exitCode = 1;
 			return;
 		}
+
+		const jsonOutput = args.json === true;
 
 		await runCommand(args, {}, (db) => {
 			if (filter === 'unreadable') {

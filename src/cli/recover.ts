@@ -172,7 +172,8 @@ export async function runRecovery(
 	// A volume that vanished between stat and statfs drops out here rather than aborting
 	const volumes: { dev: number; freeBytes: number }[] = [];
 	const droppedDevs = new Set<number>();
-	for (const dev of new Set(items.map((item) => item.dev))) {
+	const devs = new Set(items.map((item) => item.dev));
+	for (const dev of devs) {
 		const sample = items.find((item) => item.dev === dev);
 		if (!sample) continue;
 		try {

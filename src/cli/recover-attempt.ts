@@ -182,7 +182,7 @@ export async function attemptRecovery(
 		lostSamples: verdict.lostSamples,
 		note: `(lost ${lostSeconds.toFixed(1)}s)`,
 		sampleRate: format.sampleRate,
-		...(warning === undefined ? {} : { warning }),
+		...(warning !== undefined && { warning }),
 	});
 }
 

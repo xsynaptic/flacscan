@@ -17,9 +17,8 @@ export async function ensureBinary(name: string, hint?: string): Promise<void> {
 }
 
 export function extractStderr(error: unknown): string {
-	const stderr =
-		error instanceof Error && 'stderr' in error
-			? String((error as { stderr: unknown }).stderr)
-			: String(error);
+	const stderr = String(
+		error instanceof Error && 'stderr' in error ? (error as { stderr: unknown }).stderr : error,
+	);
 	return stderr.trim();
 }

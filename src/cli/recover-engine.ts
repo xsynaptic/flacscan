@@ -149,18 +149,22 @@ function decodeReencode(src: string, dest: string, format: FlacFormat): Promise<
 		let encoderErr = '';
 
 		function fail(message: string): void {
-			if (!settled) {
-				settled = true;
-				decoder.kill();
-				encoder.kill();
-				reject(new Error(message));
+			if (settled) {
+				return;
 			}
+
+			settled = true;
+			decoder.kill();
+			encoder.kill();
+			reject(new Error(message));
 		}
 		function maybeResolve(): void {
-			if (!settled && decoderClosed && encoderClosed) {
-				settled = true;
-				resolve();
+			if (!(!settled && decoderClosed && encoderClosed)) {
+				return;
 			}
+
+			settled = true;
+			resolve();
 		}
 
 		// Swallow stream errors on the wired-up pipes:
@@ -233,7 +237,7 @@ async function probeFlac(filePath: string): Promise<FlacFormat> {
 	const channels = Number(lines[2]);
 	const bitsPerSample = Number(lines[3]);
 	if (
-		![totalSamples, sampleRate, channels, bitsPerSample].every((value) => Number.isFinite(value))
+		[totalSamples, sampleRate, channels, bitsPerSample].some((value) => !Number.isFinite(value))
 	) {
 		throw new Error(`could not parse metaflac output for ${filePath}: ${stdout.trim()}`);
 	}

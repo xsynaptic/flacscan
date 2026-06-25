@@ -36,7 +36,7 @@ export async function discoverFiles(
 			for (const entry of entries) {
 				if (
 					typeof entry !== 'string' ||
-					!extensions.some((extension) => entry.toLowerCase().endsWith(extension))
+					extensions.every((extension) => !entry.toLowerCase().endsWith(extension))
 				) {
 					continue;
 				}

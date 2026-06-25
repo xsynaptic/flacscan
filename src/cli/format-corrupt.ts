@@ -23,6 +23,6 @@ function extractFirstError(errorOutput: string): string {
 	if (match?.[1]) {
 		return match[1].replace('FLAC__STREAM_DECODER_ERROR_STATUS_', '');
 	}
-	const firstLine = errorOutput.split('\n')[0]?.trim();
+	const firstLine = errorOutput.split('\n', 1)[0]?.trim();
 	return firstLine ?? 'unknown error';
 }

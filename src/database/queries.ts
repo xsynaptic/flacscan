@@ -80,9 +80,9 @@ export function getFilesNeedingVerification(
 	batchSize: number,
 	directories: string[],
 ): FileRow[] {
-	const cutoff = new Date(Date.now() - rescanDays * 24 * 60 * 60 * 1000).toISOString();
-
 	if (directories.length === 0) return [];
+
+	const cutoff = new Date(Date.now() - rescanDays * 24 * 60 * 60 * 1000).toISOString();
 
 	const dirClauses = directories.map(() => String.raw`current_path LIKE ? ESCAPE '\'`).join(' OR ');
 	const escapedDirs = directories.map((d) => escapeLikePattern(d) + '%');

@@ -14,7 +14,7 @@
 		"flacscan": "./dist/index.mjs"
 	},
 	"engines": {
-		"node": ">=22.22.2"
+		"node": ">=24.0.0"
 	},
 	"repository": {
 		"type": "git",
@@ -27,8 +27,8 @@
 	"scripts": {
 		"dev": "tsx src/index.ts",
 		"build": "tsdown",
-		"format": "prettier --write . && eslint --fix . && knip && tsc --noEmit && vitest run",
-		"check": "prettier --check . && eslint . && knip && tsc --noEmit && vitest run",
+		"fix": "prettier --write . --cache && eslint --fix --cache --cache-location node_modules/.cache/eslint/ && tsc --noEmit && knip && vitest run",
+		"check": "prettier --check . && eslint && tsc --noEmit && knip && vitest run",
 		"lint": "eslint . --fix",
 		"check-types": "tsc --noEmit",
 		"knip": "knip",
@@ -40,29 +40,29 @@
 		"prepublishOnly": "pnpm build"
 	},
 	"dependencies": {
-		"better-sqlite3": "^12.10.0",
+		"better-sqlite3": "^12.11.1",
 		"chalk": "^5.4.1",
 		"citty": "^0.2.2",
-		"ora": "^9.4.0",
+		"ora": "^9.4.1",
 		"yaml": "^2.9.0"
 	},
 	"devDependencies": {
 		"@changesets/cli": "^2.31.0",
-		"@eslint/js": "^9.39.4",
+		"@eslint/js": "^10.0.1",
 		"@types/better-sqlite3": "^7.6.13",
-		"@types/node": "^25.9.3",
-		"eslint": "^9.39.4",
+		"@types/node": "^24.13.2",
+		"eslint": "^10.5.0",
 		"eslint-config-prettier": "^10.1.8",
-		"eslint-plugin-perfectionist": "^5.9.0",
-		"eslint-plugin-unicorn": "^64.0.0",
+		"eslint-plugin-perfectionist": "^5.9.1",
+		"eslint-plugin-unicorn": "^68.0.0",
 		"jiti": "^2.7.0",
-		"knip": "^6.16.1",
+		"knip": "^6.18.0",
 		"prettier": "^3.8.4",
-		"tsdown": "^0.22.2",
+		"tsdown": "^0.22.3",
 		"tsx": "^4.22.4",
 		"typescript": "^6.0.3",
-		"typescript-eslint": "^8.61.0",
-		"vitest": "^4.1.8"
+		"typescript-eslint": "^8.62.0",
+		"vitest": "^4.1.9"
 	},
 	"knip": {
 		"ignoreBinaries": [

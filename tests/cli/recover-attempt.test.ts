@@ -40,9 +40,7 @@ const fmt = (totalSamples: number, sampleRate = 44_100): FlacFormat => ({
 const probeBy =
 	(srcTotal: number, partialTotal: number, sampleRate = 44_100) =>
 	(p: string): Promise<FlacFormat> =>
-		Promise.resolve(
-			p.endsWith('.partial') ? fmt(partialTotal, sampleRate) : fmt(srcTotal, sampleRate),
-		);
+		Promise.resolve(fmt(p.endsWith('.partial') ? partialTotal : srcTotal, sampleRate));
 
 function makeEnv(overrides: Partial<RecoveryEnv>): RecoveryEnv {
 	return {

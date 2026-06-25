@@ -111,8 +111,8 @@ function getFlacScanDir(): string {
 
 function parseNumeric(value: string | undefined, name: string): number | undefined {
 	if (value === undefined) return undefined;
-	const parsed = Number.parseInt(value, 10);
-	if (Number.isNaN(parsed) || parsed <= 0) {
+	const parsed = Number(value);
+	if (!Number.isSafeInteger(parsed) || parsed <= 0) {
 		throw new FlacScanError(`Invalid value for ${name}: "${value}" (must be a positive integer)`);
 	}
 	return parsed;
@@ -120,7 +120,7 @@ function parseNumeric(value: string | undefined, name: string): number | undefin
 
 function parsePositiveNumber(value: string | undefined, name: string): number | undefined {
 	if (value === undefined) return undefined;
-	const parsed = Number.parseFloat(value);
+	const parsed = Number(value);
 	if (!Number.isFinite(parsed) || parsed <= 0) {
 		throw new FlacScanError(`Invalid value for ${name}: "${value}" (must be a positive number)`);
 	}
@@ -168,9 +168,9 @@ function validateFileConfig(parsed: unknown, configPath: string): Partial<FlacSc
 	}
 
 	for (const key of POSITIVE_INTEGER_KEYS) {
-		if (!(key in source)) continue;
 		const value = source[key];
-		if (typeof value !== 'number' || !Number.isInteger(value) || value <= 0) {
+		if (value === undefined) continue;
+		if (typeof value !== 'number' || !Number.isSafeInteger(value) || value <= 0) {
 			throw new FlacScanError(
 				`Invalid value for ${key} in ${configPath} (must be a positive integer)`,
 			);
@@ -197,8 +197,8 @@ function validateFileConfig(parsed: unknown, configPath: string): Partial<FlacSc
 	}
 
 	for (const key of STRING_KEYS) {
-		if (!(key in source)) continue;
 		const value = source[key];
+		if (value === undefined) continue;
 		if (typeof value !== 'string') {
 			throw new FlacScanError(`Invalid value for ${key} in ${configPath} (must be a string)`);
 		}

@@ -117,7 +117,7 @@ export async function verifyAndRecord(
 		errorTimestamp: result.errorTimestamp,
 		kind: 'corrupt',
 		severity,
-		...(annotation ? { fix: annotation } : {}),
+		...(annotation && { fix: annotation }),
 	};
 }
 
