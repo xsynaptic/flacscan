@@ -1,6 +1,7 @@
 import { defineCommand } from 'citty';
 
 import packageJson from '../../package.json' with { type: 'json' };
+import { acceptCommand } from './accept.js';
 import { listCommand } from './list.js';
 import { recheckCommand } from './recheck.js';
 import { recoverCommand } from './recover.js';
@@ -15,6 +16,7 @@ export const main = defineCommand({
 		version: packageJson.version,
 	},
 	subCommands: {
+		accept: acceptCommand,
 		list: listCommand,
 		recheck: recheckCommand,
 		recover: recoverCommand,

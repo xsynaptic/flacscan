@@ -1,6 +1,7 @@
 import type { ErrorSeverity } from '../verifiers/types.js';
 
 export interface FileRow {
+	acknowledged_at: null | string;
 	album: null | string;
 	artist: null | string;
 	current_path: string;
@@ -27,6 +28,7 @@ export type FileStatus = 'corrupt' | 'healthy' | 'pending';
 export type RecoveryResult = 'recovered' | 'unsuitable';
 
 export interface UnreadableFileRow {
+	acknowledged_at: null | string;
 	current_path: string;
 	error_output: string;
 	first_seen_at: string;

@@ -6,6 +6,8 @@ import { checkMountedPaths } from '../discovery.js';
 import { runCommand } from './run-command.js';
 import { sharedArguments } from './shared-arguments.js';
 
+const plain = (value: string) => value;
+
 export const statusCommand = defineCommand({
 	args: {
 		...sharedArguments,
@@ -21,15 +23,23 @@ export const statusCommand = defineCommand({
 
 			console.log(chalk.bold('\nflacscan status\n'));
 
+			const corruptColor = stats.newCorrupt > 0 ? chalk.red : plain;
+			const unreadableColor = stats.newUnreadable > 0 ? chalk.red : plain;
+
 			console.log(`  Total files:      ${chalk.bold(String(stats.total))}`);
 			console.log(`  Healthy:          ${chalk.green(String(stats.healthy))}`);
 			console.log(
-				`  Corrupt:          ${stats.corrupt > 0 ? chalk.red(String(stats.corrupt)) : String(stats.corrupt)}`,
+				`  Corrupt:          ${corruptColor(String(stats.corrupt))} (${String(stats.newCorrupt)} new, ${String(stats.corrupt - stats.newCorrupt)} accepted)`,
 			);
 			console.log(`  Pending:          ${String(stats.pending)}`);
 			console.log(
-				`  Unreadable:       ${stats.unreadable > 0 ? chalk.red(String(stats.unreadable)) : String(stats.unreadable)}`,
+				`  Unreadable:       ${unreadableColor(String(stats.unreadable))} (${String(stats.newUnreadable)} new, ${String(stats.unreadable - stats.newUnreadable)} accepted)`,
 			);
+
+			const totalIssues = stats.corrupt + stats.unreadable;
+			if (stats.newCorrupt + stats.newUnreadable === 0 && totalIssues > 0) {
+				console.log(chalk.green('  No new issues.'));
+			}
 
 			if (stats.severityBreakdown.length > 0) {
 				console.log(chalk.bold('\n  Corruption by severity:'));

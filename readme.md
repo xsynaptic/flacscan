@@ -28,12 +28,13 @@ Copy `flacscan.config.example.yaml` to `~/.flacscan/flacscan.config.yaml` and ed
 flacscan                             # print this command list
 flacscan scan                        # run one verification batch
 flacscan recheck                     # re-verify all known bad files, prune deleted entries
+flacscan accept                      # accept current issues; future runs alarm only on new ones
 flacscan recover                     # re-encode salvageable corrupt files alongside the originals
 flacscan recover recoverable         # filter: critical, recoverable, unknown
 flacscan status                      # collection health overview
 flacscan report                      # dump all known issues (--output file.txt)
 flacscan list                        # file paths to stdout for scripting
-flacscan list critical               # filter: critical, recoverable, unknown, unreadable
+flacscan list new                    # filters: new, accepted, critical, recoverable, unknown, unreadable
 flacscan list --json                 # structured JSON per issue (combine with a filter)
 ```
 
@@ -71,11 +72,11 @@ Every command accepts:
 
 ### Exit codes
 
-| Code | Meaning                                   |
-| ---- | ----------------------------------------- |
-| 0    | Clean run                                 |
-| 1    | Corruption detected                       |
-| 2    | Tool error (bad config, missing binaries) |
+| Code | Meaning                                    |
+| ---- | ------------------------------------------ |
+| 0    | Clean run                                  |
+| 1    | New corruption detected (not yet accepted) |
+| 2    | Tool error (bad config, missing binaries)  |
 
 ## How it works
 
@@ -87,6 +88,10 @@ Each `flacscan` invocation:
 4. Logs corruption, unreadable files, and ID3 issues to an append-only log file
 
 Files are re-verified on a configurable interval. A full sweep of a large collection happens incrementally across many runs.
+
+### Reaching a green baseline
+
+An initial scan of a large collection often finds standing damage (files that are hard or impossible to replace). Replace what you can, then run `flacscan accept` to mark the rest as known. From then on `scan` and `recheck` exit 0 and stay quiet unless something **new** goes bad; exit 1 means new corruption you haven't accepted yet. An accepted issue reverts to new automatically when a file verifies healthy again or when its content changes (different mtime/size), since changed bytes are a new episode. `status`, `report`, `list`, and the log all split new issues from accepted ones; `list new` and `list accepted` filter each side.
 
 ### File categories
 

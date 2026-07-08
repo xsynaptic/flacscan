@@ -6,12 +6,15 @@ import type { FileRow, UnreadableFileRow } from '../database/types.js';
 import {
 	getAllUnreadableFiles,
 	getCorruptFiles,
+	getCorruptFilesByAcknowledged,
 	getCorruptFilesBySeverity,
+	getUnreadableFilesByAcknowledged,
 } from '../database/queries.js';
 import { runCommand } from './run-command.js';
 import { sharedArguments } from './shared-arguments.js';
 
 interface CorruptJsonEntry {
+	acknowledged_at: null | string;
 	album: null | string;
 	artist: null | string;
 	duration: null | number;
@@ -31,12 +34,20 @@ interface CorruptJsonEntry {
 }
 
 interface UnreadableJsonEntry {
+	acknowledged_at: null | string;
 	error_output: string;
 	original_path: string;
 	type: 'unreadable';
 }
 
-const VALID_FILTERS = ['critical', 'recoverable', 'unknown', 'unreadable'] as const;
+const VALID_FILTERS = [
+	'accepted',
+	'critical',
+	'new',
+	'recoverable',
+	'unknown',
+	'unreadable',
+] as const;
 type Filter = (typeof VALID_FILTERS)[number];
 
 function deriveInputText(file: FileRow): string {
@@ -57,6 +68,7 @@ function installPipeHandler() {
 
 function toCorruptJson(file: FileRow): CorruptJsonEntry {
 	return {
+		acknowledged_at: file.acknowledged_at,
 		album: file.album,
 		artist: file.artist,
 		duration: file.duration,
@@ -78,6 +90,7 @@ function toCorruptJson(file: FileRow): CorruptJsonEntry {
 
 function toUnreadableJson(file: UnreadableFileRow): UnreadableJsonEntry {
 	return {
+		acknowledged_at: file.acknowledged_at,
 		error_output: file.error_output,
 		original_path: file.current_path,
 		type: 'unreadable',
@@ -88,7 +101,7 @@ export const listCommand = defineCommand({
 	args: {
 		...sharedArguments,
 		filter: {
-			description: 'Filter: critical, recoverable, unknown, unreadable',
+			description: 'Filter: new, accepted, critical, recoverable, unknown, unreadable',
 			required: false,
 			type: 'positional',
 		},
@@ -128,6 +141,28 @@ export const listCommand = defineCommand({
 					);
 				} else {
 					for (const file of files) process.stdout.write(file.current_path + '\n');
+				}
+				return;
+			}
+
+			if (filter === 'new' || filter === 'accepted') {
+				const accepted = filter === 'accepted';
+				const corrupt = getCorruptFilesByAcknowledged(db, accepted);
+				const unreadable = getUnreadableFilesByAcknowledged(db, accepted);
+				if (jsonOutput) {
+					const results: Array<CorruptJsonEntry | UnreadableJsonEntry> = [
+						...corrupt.map((file) => toCorruptJson(file)),
+						...unreadable.map((file) => toUnreadableJson(file)),
+					];
+					results.sort((a, b) => a.original_path.localeCompare(b.original_path));
+					process.stdout.write(JSON.stringify(results, null, 2) + '\n');
+				} else {
+					const paths = [
+						...corrupt.map((file) => file.current_path),
+						...unreadable.map((file) => file.current_path),
+					];
+					paths.sort((a, b) => a.localeCompare(b));
+					for (const filePath of paths) process.stdout.write(filePath + '\n');
 				}
 				return;
 			}

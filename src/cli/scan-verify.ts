@@ -18,6 +18,7 @@ interface VerificationStats {
 	exitCode: number;
 	fixed: number;
 	healthy: number;
+	newCorrupt: number;
 	pruned: number;
 }
 
@@ -49,6 +50,7 @@ export async function runVerification(
 		exitCode: 0,
 		fixed: 0,
 		healthy: 0,
+		newCorrupt: 0,
 		pruned: 0,
 	};
 	let verified = 0;
@@ -90,15 +92,21 @@ export async function runVerification(
 					chalk.dim(`          Non-standard ${outcome.fix.label} tags found, use --fix to strip`),
 				);
 			}
+			// Pre-verification row: acknowledged means this corruption was already triaged
+			const isKnown = file.acknowledged_at !== null;
 			logCorruption(
 				config.log_path,
 				outcome.severity,
 				file.current_path,
 				outcome.errorOutput.replaceAll('\n', ' '),
+				isKnown,
 			);
-			printCorruptFile(spinner, file.current_path, outcome.severity, outcome);
+			printCorruptFile(spinner, file.current_path, outcome.severity, outcome, { known: isKnown });
 			stats.corrupt++;
-			stats.exitCode = 1;
+			if (!isKnown) {
+				stats.newCorrupt++;
+				stats.exitCode = 1;
+			}
 		}
 
 		verified++;
@@ -106,16 +114,20 @@ export async function runVerification(
 	});
 
 	const verifiedTotal = stats.healthy + stats.corrupt + stats.fixed + stats.pruned;
+	const corruptSummary =
+		stats.corrupt > 0
+			? `${String(stats.corrupt)} corrupt (${String(stats.newCorrupt)} new)`
+			: '0 corrupt';
 	const fixedSummary = stats.fixed > 0 ? `, ${String(stats.fixed)} fixed` : '';
 	const prunedSummary = stats.pruned > 0 ? `, ${String(stats.pruned)} pruned` : '';
 
 	if (isShuttingDown()) {
 		spinner.warn(
-			`Verification interrupted: ${String(verifiedTotal)}/${String(filesToVerify.length)} files. ${String(stats.healthy)} healthy, ${String(stats.corrupt)} corrupt${fixedSummary}${prunedSummary}.`,
+			`Verification interrupted: ${String(verifiedTotal)}/${String(filesToVerify.length)} files. ${String(stats.healthy)} healthy, ${corruptSummary}${fixedSummary}${prunedSummary}.`,
 		);
 	} else {
 		spinner.succeed(
-			`Verified ${String(filesToVerify.length)} files. ${String(stats.healthy)} healthy, ${String(stats.corrupt)} corrupt${fixedSummary}${prunedSummary}.`,
+			`Verified ${String(filesToVerify.length)} files. ${String(stats.healthy)} healthy, ${corruptSummary}${fixedSummary}${prunedSummary}.`,
 		);
 	}
 

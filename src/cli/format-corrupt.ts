@@ -9,12 +9,17 @@ export function printCorruptFile(
 	filePath: string,
 	severity: ErrorSeverity,
 	result: { errorOutput: string; errorTimestamp: null | string },
+	opts: { known: boolean },
 ): void {
-	const severityColor = severity === 'recoverable' ? chalk.yellow : chalk.red;
 	const firstError = extractFirstError(result.errorOutput);
 	const location = result.errorTimestamp ? ` (${result.errorTimestamp})` : '';
 	spinner.clear();
-	console.log(severityColor(`  CORRUPT [${severity}] ${filePath}`));
+	if (opts.known) {
+		console.log(chalk.dim(`  CORRUPT (accepted) [${severity}] ${filePath}`));
+	} else {
+		const severityColor = severity === 'recoverable' ? chalk.yellow : chalk.red;
+		console.log(severityColor(`  NEW CORRUPT [${severity}] ${filePath}`));
+	}
 	console.log(chalk.dim(`          ${firstError}${location}`));
 }
 

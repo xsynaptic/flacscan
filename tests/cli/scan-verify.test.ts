@@ -87,6 +87,36 @@ describe('runVerification', () => {
 		expect(logEvents(config.log_path)).toContain('corrupt');
 	});
 
+	it('alarms on an unacknowledged corrupt file (exit 1, one new)', async () => {
+		seedFile('new-bad.flac');
+		const verifier = fakeVerifier(() =>
+			Promise.resolve({ errorOutput: 'boom', errorTimestamp: null, status: 'corrupt' }),
+		);
+
+		const stats = await runVerification(db, makeTestConfig(tempDir), [tempDir], verifier);
+
+		expect(stats?.corrupt).toBe(1);
+		expect(stats?.newCorrupt).toBe(1);
+		expect(stats?.exitCode).toBe(1);
+	});
+
+	it('stays green on an acknowledged corrupt file (exit 0, none new)', async () => {
+		const filePath = seedFile('known-bad.flac');
+		const old = new Date(Date.now() - 200 * 24 * 60 * 60 * 1000).toISOString();
+		db.prepare(
+			`UPDATE files SET last_result = 'corrupt', acknowledged_at = ?, last_verified_at = ? WHERE current_path = ?`,
+		).run('2020-01-01T00:00:00.000Z', old, filePath);
+		const verifier = fakeVerifier(() =>
+			Promise.resolve({ errorOutput: 'boom', errorTimestamp: null, status: 'corrupt' }),
+		);
+
+		const stats = await runVerification(db, makeTestConfig(tempDir), [tempDir], verifier);
+
+		expect(stats?.corrupt).toBe(1);
+		expect(stats?.newCorrupt).toBe(0);
+		expect(stats?.exitCode).toBe(0);
+	});
+
 	it('prunes a row whose file no longer exists', async () => {
 		const filePath = seedFile('vanished.flac');
 		fs.rmSync(filePath);

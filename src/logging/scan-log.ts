@@ -8,10 +8,12 @@ export function logCorruption(
 	severity: ErrorSeverity,
 	filePath: string,
 	details: string,
+	known: boolean,
 ) {
 	appendEntry(logPath, {
 		details,
 		event: 'corrupt',
+		known,
 		level: 'error',
 		path: filePath,
 		severity,
@@ -47,7 +49,7 @@ export function logFixFailed(logPath: string, filePath: string, label: string, e
 
 export function logScanComplete(
 	logPath: string,
-	stats: { corrupt: number; healthy: number; pruned: number; total: number },
+	stats: { corrupt: number; healthy: number; newCorrupt: number; pruned: number; total: number },
 ) {
 	appendEntry(logPath, {
 		event: 'scan_complete',

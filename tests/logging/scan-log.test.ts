@@ -31,7 +31,7 @@ describe('scan-log', () => {
 	it('writes one parseable corruption line', () => {
 		const logPath = uniqueLogPath('a.log');
 
-		logCorruption(logPath, 'critical', '/music/bad.flac', 'decode error');
+		logCorruption(logPath, 'critical', '/music/bad.flac', 'decode error', false);
 
 		const lines = readLines(logPath);
 		expect(lines).toHaveLength(1);
@@ -39,6 +39,7 @@ describe('scan-log', () => {
 		expect(entry).toMatchObject({
 			details: 'decode error',
 			event: 'corrupt',
+			known: false,
 			level: 'error',
 			path: '/music/bad.flac',
 			severity: 'critical',
@@ -50,19 +51,19 @@ describe('scan-log', () => {
 	it('appends a separate line per call', () => {
 		const logPath = uniqueLogPath('b.log');
 
-		logCorruption(logPath, 'critical', '/music/one.flac', 'first');
-		logCorruption(logPath, 'recoverable', '/music/two.flac', 'second');
+		logCorruption(logPath, 'critical', '/music/one.flac', 'first', false);
+		logCorruption(logPath, 'recoverable', '/music/two.flac', 'second', true);
 
 		const lines = readLines(logPath);
 		expect(lines).toHaveLength(2);
 		expect(parseLine(lines[0] ?? '').path).toBe('/music/one.flac');
-		expect(parseLine(lines[1] ?? '').path).toBe('/music/two.flac');
+		expect(parseLine(lines[1] ?? '')).toMatchObject({ known: true, path: '/music/two.flac' });
 	});
 
 	it('creates the parent directory when missing', () => {
 		const logPath = uniqueLogPath('nested', 'deeper', 'c.log');
 
-		logCorruption(logPath, 'unknown', '/music/x.flac', 'boom');
+		logCorruption(logPath, 'unknown', '/music/x.flac', 'boom', false);
 
 		expect(fs.existsSync(logPath)).toBe(true);
 	});
@@ -71,7 +72,7 @@ describe('scan-log', () => {
 		const logPath = uniqueLogPath('d.log');
 
 		logScanStart(logPath, 2, 3, ['/Volumes/Gone']);
-		logScanComplete(logPath, { corrupt: 1, healthy: 9, pruned: 2, total: 12 });
+		logScanComplete(logPath, { corrupt: 1, healthy: 9, newCorrupt: 1, pruned: 2, total: 12 });
 
 		const lines = readLines(logPath);
 		const start = parseLine(lines[0] ?? '');
@@ -82,7 +83,7 @@ describe('scan-log', () => {
 		});
 		expect(complete).toMatchObject({
 			event: 'scan_complete',
-			stats: { corrupt: 1, healthy: 9, pruned: 2, total: 12 },
+			stats: { corrupt: 1, healthy: 9, newCorrupt: 1, pruned: 2, total: 12 },
 		});
 	});
 });

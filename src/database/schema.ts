@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS files (
   error_severity  TEXT,
   error_output    TEXT,
   error_timestamp TEXT,
+  acknowledged_at TEXT,
   artist          TEXT,
   title           TEXT,
   album           TEXT,
@@ -32,6 +33,7 @@ const CREATE_UNREADABLE_FILES_TABLE = `
 CREATE TABLE IF NOT EXISTS unreadable_files (
   current_path  TEXT PRIMARY KEY,
   error_output  TEXT NOT NULL,
+  acknowledged_at TEXT,
   first_seen_at TEXT NOT NULL,
   updated_at    TEXT NOT NULL
 );
@@ -52,6 +54,7 @@ function applyMigrations(database: Database.Database) {
 		'title',
 		'album',
 		'date',
+		'acknowledged_at',
 		'recovery_attempted_at',
 		'recovery_result',
 		'recovery_detail',
@@ -65,5 +68,13 @@ function applyMigrations(database: Database.Database) {
 	}
 	if (!existing.has('recovery_lost_samples')) {
 		database.exec(`ALTER TABLE files ADD COLUMN recovery_lost_samples INTEGER`);
+	}
+
+	const unreadableColumns = database.pragma('table_info(unreadable_files)') as Array<{
+		name: string;
+	}>;
+	const existingUnreadable = new Set(unreadableColumns.map((col) => col.name));
+	if (!existingUnreadable.has('acknowledged_at')) {
+		database.exec(`ALTER TABLE unreadable_files ADD COLUMN acknowledged_at TEXT`);
 	}
 }

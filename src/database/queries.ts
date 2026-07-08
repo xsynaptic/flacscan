@@ -10,6 +10,22 @@ import { directoryPrefix } from '../paths.js';
 // dominates discovery cost on large collections
 const statementCaches = new WeakMap<Database.Database, Map<string, Database.Statement>>();
 
+export function acknowledgeAllIssues(database: Database.Database): {
+	corrupt: number;
+	unreadable: number;
+} {
+	const now = new Date().toISOString();
+	const corrupt = prepareCached(
+		database,
+		`UPDATE files SET acknowledged_at = ?, updated_at = ? WHERE last_result = 'corrupt' AND acknowledged_at IS NULL`,
+	).run(now, now).changes;
+	const unreadable = prepareCached(
+		database,
+		`UPDATE unreadable_files SET acknowledged_at = ?, updated_at = ? WHERE acknowledged_at IS NULL`,
+	).run(now, now).changes;
+	return { corrupt, unreadable };
+}
+
 export function clearRecoveryOutcome(database: Database.Database, currentPath: string) {
 	prepareCached(
 		database,
@@ -63,6 +79,17 @@ export function getCorruptFiles(database: Database.Database): FileRow[] {
 	return prepareCached(
 		database,
 		`SELECT * FROM files WHERE last_result = 'corrupt' ORDER BY current_path`,
+	).all() as FileRow[];
+}
+
+export function getCorruptFilesByAcknowledged(
+	database: Database.Database,
+	acknowledged: boolean,
+): FileRow[] {
+	const clause = acknowledged ? 'acknowledged_at IS NOT NULL' : 'acknowledged_at IS NULL';
+	return prepareCached(
+		database,
+		`SELECT * FROM files WHERE last_result = 'corrupt' AND ${clause} ORDER BY current_path`,
 	).all() as FileRow[];
 }
 
@@ -140,6 +167,20 @@ export function getStats(database: Database.Database) {
 		}
 	).count;
 
+	const newCorrupt = (
+		prepareCached(
+			database,
+			`SELECT COUNT(*) as count FROM files WHERE last_result = 'corrupt' AND acknowledged_at IS NULL`,
+		).get() as { count: number }
+	).count;
+
+	const newUnreadable = (
+		prepareCached(
+			database,
+			`SELECT COUNT(*) as count FROM unreadable_files WHERE acknowledged_at IS NULL`,
+		).get() as { count: number }
+	).count;
+
 	const severityBreakdown = prepareCached(
 		database,
 		`SELECT error_severity, COUNT(*) as count FROM files WHERE last_result = 'corrupt' GROUP BY error_severity`,
@@ -153,12 +194,25 @@ export function getStats(database: Database.Database) {
 	return {
 		corrupt: countsByResult['corrupt'] ?? 0,
 		healthy: countsByResult['healthy'] ?? 0,
+		newCorrupt,
+		newUnreadable,
 		pending: countsByResult['pending'] ?? 0,
 		recoveryBreakdown,
 		severityBreakdown,
 		total,
 		unreadable,
 	};
+}
+
+export function getUnreadableFilesByAcknowledged(
+	database: Database.Database,
+	acknowledged: boolean,
+): UnreadableFileRow[] {
+	const clause = acknowledged ? 'acknowledged_at IS NOT NULL' : 'acknowledged_at IS NULL';
+	return prepareCached(
+		database,
+		`SELECT * FROM unreadable_files WHERE ${clause} ORDER BY current_path`,
+	).all() as UnreadableFileRow[];
 }
 
 export function recordRecoveryOutcome(
@@ -227,6 +281,7 @@ export function updateVerificationResult(
     UPDATE files SET
       last_verified_at = ?,
       last_result = ?,
+      acknowledged_at = CASE WHEN ? = 'healthy' THEN NULL ELSE acknowledged_at END,
       error_severity = ?,
       error_output = ?,
       error_timestamp = ?,
@@ -235,6 +290,7 @@ export function updateVerificationResult(
   `,
 	).run(
 		now,
+		result.last_result,
 		result.last_result,
 		result.error_severity ?? null,
 		result.error_output ?? null,
@@ -262,10 +318,10 @@ export function upsertFile(
       file_size = excluded.file_size,
       file_mtime = excluded.file_mtime,
       updated_at = excluded.updated_at,
-      -- the file's bytes changed (different mtime/size), so the previous verification is
-      -- stale — mark it pending so the next scan re-verifies it
+      -- changed bytes are a new episode: re-verify from scratch and drop any acknowledgement
       last_result = 'pending',
-      last_verified_at = NULL
+      last_verified_at = NULL,
+      acknowledged_at = NULL
   `,
 	).run(file.current_path, file.file_size, file.file_mtime, now, now);
 }

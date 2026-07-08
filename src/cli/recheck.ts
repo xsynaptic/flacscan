@@ -73,7 +73,7 @@ export const recheckCommand = defineCommand({
 					text: `Rechecking: 0/${String(items.length)} files`,
 				}).start();
 
-				const stats = { corrupt: 0, healthy: 0, pruned: 0 };
+				const stats = { corrupt: 0, healthy: 0, newCorrupt: 0, pruned: 0 };
 				let processed = 0;
 
 				await processPool(items, config.parallelism, async (item) => {
@@ -101,8 +101,11 @@ export const recheckCommand = defineCommand({
 					if (outcome.kind === 'interrupted') return;
 
 					if (outcome.kind === 'corrupt') {
+						// A promoted unreadable file has no prior verdict, so it counts as new
+						const isKnown = item.source === 'files' && item.row.acknowledged_at !== null;
 						stats.corrupt++;
-						printCorruptFile(spinner, filePath, outcome.severity, outcome);
+						if (!isKnown) stats.newCorrupt++;
+						printCorruptFile(spinner, filePath, outcome.severity, outcome, { known: isKnown });
 					} else {
 						stats.healthy++;
 						spinner.clear();
@@ -114,18 +117,22 @@ export const recheckCommand = defineCommand({
 				});
 
 				const total = stats.healthy + stats.corrupt + stats.pruned;
+				const corruptSummary =
+					stats.corrupt > 0
+						? `${String(stats.corrupt)} corrupt (${String(stats.newCorrupt)} new)`
+						: '0 corrupt';
 
 				if (isShuttingDown()) {
 					spinner.warn(
-						`Recheck interrupted: ${String(processed)}/${String(items.length)} files. ${String(stats.healthy)} healthy, ${String(stats.corrupt)} corrupt, ${String(stats.pruned)} pruned.`,
+						`Recheck interrupted: ${String(processed)}/${String(items.length)} files. ${String(stats.healthy)} healthy, ${corruptSummary}, ${String(stats.pruned)} pruned.`,
 					);
 				} else {
 					spinner.succeed(
-						`Rechecked ${String(total)} files. ${String(stats.healthy)} healthy, ${String(stats.corrupt)} corrupt, ${String(stats.pruned)} pruned.`,
+						`Rechecked ${String(total)} files. ${String(stats.healthy)} healthy, ${corruptSummary}, ${String(stats.pruned)} pruned.`,
 					);
 				}
 
-				process.exitCode = stats.corrupt > 0 ? 1 : 0;
+				process.exitCode = stats.newCorrupt > 0 ? 1 : 0;
 			},
 		);
 	},

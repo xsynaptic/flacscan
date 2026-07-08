@@ -1,5 +1,11 @@
 # flacscan
 
+## 3.0.0
+
+### Major Changes
+
+- New `flacscan accept` command and acceptance baseline: exit code 1 now means NEW (not-yet-accepted) corruption; status/report/list/log split new vs accepted issues
+
 ## 2.2.2
 
 ### Patch Changes

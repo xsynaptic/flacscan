@@ -7,14 +7,18 @@ import type { FileStatus } from '../../src/database/types.js';
 import type { ErrorSeverity } from '../../src/verifiers/types.js';
 
 import {
+	acknowledgeAllIssues,
 	clearRecoveryOutcome,
 	countRecoveryAttempted,
 	deleteFileByPath,
 	findFileByPath,
+	findUnreadableByPath,
 	getCorruptFiles,
+	getCorruptFilesByAcknowledged,
 	getFilesNeedingVerification,
 	getRecoveryCandidates,
 	getStats,
+	getUnreadableFilesByAcknowledged,
 	recordRecoveryOutcome,
 	updateVerificationResult,
 	upsertFile,
@@ -34,6 +38,7 @@ afterEach(() => {
 });
 
 function insertFile(overrides: {
+	acknowledged_at?: null | string;
 	current_path?: string;
 	error_output?: null | string;
 	error_severity?: ErrorSeverity | null;
@@ -46,13 +51,14 @@ function insertFile(overrides: {
 }) {
 	const now = new Date().toISOString();
 	db.prepare(
-		`INSERT INTO files (current_path, last_result, last_verified_at,
+		`INSERT INTO files (current_path, last_result, last_verified_at, acknowledged_at,
 		error_severity, error_output, file_size, file_mtime, first_seen_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 	).run(
 		overrides.current_path ?? '/music/test.flac',
 		overrides.last_result ?? 'pending',
 		overrides.last_verified_at ?? null,
+		overrides.acknowledged_at ?? null,
 		overrides.error_severity ?? null,
 		overrides.error_output ?? null,
 		overrides.file_size ?? null,
@@ -68,6 +74,8 @@ describe('getStats', () => {
 		expect(stats).toEqual({
 			corrupt: 0,
 			healthy: 0,
+			newCorrupt: 0,
+			newUnreadable: 0,
 			pending: 0,
 			recoveryBreakdown: [],
 			severityBreakdown: [],
@@ -120,6 +128,161 @@ describe('getStats', () => {
 		const breakdown = new Map(stats.severityBreakdown.map((r) => [r.error_severity, r.count]));
 		expect(breakdown.get('critical')).toBe(2);
 		expect(breakdown.get('recoverable')).toBe(1);
+	});
+
+	it('splits corrupt and unreadable into new vs acknowledged', () => {
+		insertFile({ current_path: '/music/new.flac', last_result: 'corrupt' });
+		insertFile({
+			acknowledged_at: '2020-01-01T00:00:00.000Z',
+			current_path: '/music/known.flac',
+			last_result: 'corrupt',
+		});
+		upsertUnreadableFile(db, { current_path: '/bad/x.flac', error_output: 'e' });
+
+		const stats = getStats(db);
+		expect(stats.corrupt).toBe(2);
+		expect(stats.newCorrupt).toBe(1);
+		expect(stats.unreadable).toBe(1);
+		expect(stats.newUnreadable).toBe(1);
+	});
+});
+
+describe('acknowledgement', () => {
+	it('acknowledgeAllIssues stamps only un-stamped corrupt and unreadable rows', () => {
+		insertFile({ current_path: '/music/new.flac', last_result: 'corrupt' });
+		insertFile({
+			acknowledged_at: '2020-01-01T00:00:00.000Z',
+			current_path: '/music/known.flac',
+			last_result: 'corrupt',
+		});
+		insertFile({ current_path: '/music/ok.flac', last_result: 'healthy' });
+		upsertUnreadableFile(db, { current_path: '/bad/x.flac', error_output: 'e' });
+
+		const counts = acknowledgeAllIssues(db);
+
+		expect(counts).toEqual({ corrupt: 1, unreadable: 1 });
+		expect(findFileByPath(db, '/music/new.flac')?.acknowledged_at).not.toBeNull();
+		expect(findFileByPath(db, '/music/known.flac')?.acknowledged_at).toBe(
+			'2020-01-01T00:00:00.000Z',
+		);
+		expect(findFileByPath(db, '/music/ok.flac')?.acknowledged_at).toBeNull();
+	});
+
+	it('updateVerificationResult clears the stamp on healthy but keeps it on corrupt', () => {
+		insertFile({
+			acknowledged_at: '2020-01-01T00:00:00.000Z',
+			current_path: '/music/a.flac',
+			last_result: 'corrupt',
+		});
+
+		updateVerificationResult(db, '/music/a.flac', { last_result: 'corrupt' });
+		expect(findFileByPath(db, '/music/a.flac')?.acknowledged_at).toBe('2020-01-01T00:00:00.000Z');
+
+		updateVerificationResult(db, '/music/a.flac', { last_result: 'healthy' });
+		expect(findFileByPath(db, '/music/a.flac')?.acknowledged_at).toBeNull();
+	});
+
+	it('upsertFile clears the stamp when content changes', () => {
+		insertFile({
+			acknowledged_at: '2020-01-01T00:00:00.000Z',
+			current_path: '/music/a.flac',
+			file_mtime: '2020-01-01T00:00:00.000Z',
+			file_size: 1,
+			last_result: 'corrupt',
+		});
+
+		upsertFile(db, {
+			current_path: '/music/a.flac',
+			file_mtime: '2026-01-01T00:00:00.000Z',
+			file_size: 2,
+		});
+
+		const row = findFileByPath(db, '/music/a.flac');
+		expect(row?.acknowledged_at).toBeNull();
+		expect(row?.last_result).toBe('pending');
+	});
+
+	it('upsertUnreadableFile keeps the stamp across re-upserts', () => {
+		upsertUnreadableFile(db, { current_path: '/bad/x.flac', error_output: 'first' });
+		acknowledgeAllIssues(db);
+		upsertUnreadableFile(db, { current_path: '/bad/x.flac', error_output: 'second' });
+		expect(findUnreadableByPath(db, '/bad/x.flac')?.acknowledged_at).not.toBeNull();
+	});
+
+	it('partitions corrupt and unreadable rows by acknowledgement', () => {
+		insertFile({ current_path: '/music/new.flac', last_result: 'corrupt' });
+		insertFile({
+			acknowledged_at: '2020-01-01T00:00:00.000Z',
+			current_path: '/music/known.flac',
+			last_result: 'corrupt',
+		});
+		upsertUnreadableFile(db, { current_path: '/bad/new.flac', error_output: 'e' });
+		upsertUnreadableFile(db, { current_path: '/bad/known.flac', error_output: 'e' });
+		db.prepare(`UPDATE unreadable_files SET acknowledged_at = ? WHERE current_path = ?`).run(
+			'2020-01-01T00:00:00.000Z',
+			'/bad/known.flac',
+		);
+
+		expect(getCorruptFilesByAcknowledged(db, false).map((file) => file.current_path)).toEqual([
+			'/music/new.flac',
+		]);
+		expect(getCorruptFilesByAcknowledged(db, true).map((file) => file.current_path)).toEqual([
+			'/music/known.flac',
+		]);
+		expect(getUnreadableFilesByAcknowledged(db, false).map((file) => file.current_path)).toEqual([
+			'/bad/new.flac',
+		]);
+		expect(getUnreadableFilesByAcknowledged(db, true).map((file) => file.current_path)).toEqual([
+			'/bad/known.flac',
+		]);
+	});
+});
+
+describe('schema migration', () => {
+	it('adds acknowledged_at to a database created without it', () => {
+		const legacy = new BetterSqlite3(':memory:');
+		// Pre-007 schema literal: everything except acknowledged_at
+		legacy.exec(`
+			CREATE TABLE files (
+				current_path    TEXT PRIMARY KEY,
+				last_verified_at TEXT,
+				last_result     TEXT NOT NULL DEFAULT 'pending',
+				error_severity  TEXT,
+				error_output    TEXT,
+				error_timestamp TEXT,
+				artist          TEXT,
+				title           TEXT,
+				album           TEXT,
+				date            TEXT,
+				duration        REAL,
+				file_size       INTEGER,
+				file_mtime      TEXT,
+				recovery_attempted_at TEXT,
+				recovery_result       TEXT,
+				recovery_lost_samples INTEGER,
+				recovery_detail       TEXT,
+				first_seen_at   TEXT NOT NULL,
+				updated_at      TEXT NOT NULL
+			);
+			CREATE TABLE unreadable_files (
+				current_path  TEXT PRIMARY KEY,
+				error_output  TEXT NOT NULL,
+				first_seen_at TEXT NOT NULL,
+				updated_at    TEXT NOT NULL
+			);
+		`);
+
+		initializeSchema(legacy);
+
+		const fileCols = (legacy.pragma('table_info(files)') as Array<{ name: string }>).map(
+			(col) => col.name,
+		);
+		const unreadableCols = (
+			legacy.pragma('table_info(unreadable_files)') as Array<{ name: string }>
+		).map((col) => col.name);
+		expect(fileCols).toContain('acknowledged_at');
+		expect(unreadableCols).toContain('acknowledged_at');
+		legacy.close();
 	});
 });
 
