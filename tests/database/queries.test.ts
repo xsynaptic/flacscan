@@ -206,6 +206,16 @@ describe('getFilesNeedingVerification', () => {
 		expect(result).toHaveLength(1);
 		expect(result[0]!.current_path).toBe('/music/100%_done/track.flac');
 	});
+
+	it('does not match a sibling directory that shares a name prefix', () => {
+		insertFile({ current_path: '/music-other/x.flac', last_result: 'pending' });
+
+		expect(getFilesNeedingVerification(db, 90, 10, ['/music'])).toHaveLength(0);
+
+		const scoped = getFilesNeedingVerification(db, 90, 10, ['/music-other']);
+		expect(scoped).toHaveLength(1);
+		expect(scoped[0]!.current_path).toBe('/music-other/x.flac');
+	});
 });
 
 describe('upsertFile', () => {

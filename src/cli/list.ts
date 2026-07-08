@@ -49,7 +49,9 @@ function deriveInputText(file: FileRow): string {
 function installPipeHandler() {
 	process.stdout.on('error', (error: NodeJS.ErrnoException) => {
 		if (error.code === 'EPIPE') process.exit(0);
-		throw error;
+		// Throwing here would exit 1, which this tool reads as "corruption found"
+		console.error(String(error));
+		process.exit(2);
 	});
 }
 

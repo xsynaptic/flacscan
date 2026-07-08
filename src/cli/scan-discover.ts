@@ -7,6 +7,7 @@ import type { FlacScanConfig } from '../config/types.js';
 
 import {
 	clearRecoveryOutcome,
+	deleteUnreadableByPath,
 	findFileByPath,
 	findUnreadableByPath,
 	upsertFile,
@@ -53,12 +54,15 @@ export async function runDiscovery(
 					mtime = stat.mtime.toISOString();
 					size = stat.size;
 				} catch (error) {
-					upsertUnreadableFile(db, {
-						current_path: filePath,
-						error_output: String(error),
-					});
-					logUnreadable(config.log_path, filePath, String(error));
-					stats.unreadable++;
+					// ENOENT means it vanished between walk and stat; not an unreadable issue, skip it
+					if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+						upsertUnreadableFile(db, {
+							current_path: filePath,
+							error_output: String(error),
+						});
+						logUnreadable(config.log_path, filePath, String(error));
+						stats.unreadable++;
+					}
 					stats.processed++;
 					spinner.text = `Discovery: ${String(stats.processed)}/${String(files.length)} files (${String(stats.skipped)} cached)`;
 					continue;
@@ -72,16 +76,9 @@ export async function runDiscovery(
 					continue;
 				}
 
-				const existingUnreadable = findUnreadableByPath(db, filePath);
-				if (existingUnreadable) {
-					// Unchanged since the last failed attempt; don't retry
-					const lastAttemptedAt = existingUnreadable.updated_at;
-					if (lastAttemptedAt && mtime <= lastAttemptedAt) {
-						stats.skipped++;
-						stats.processed++;
-						spinner.text = `Discovery: ${String(stats.processed)}/${String(files.length)} files (${String(stats.skipped)} cached)`;
-						continue;
-					}
+				if (findUnreadableByPath(db, filePath)) {
+					// Readable again; rejoin the normal pipeline
+					deleteUnreadableByPath(db, filePath);
 				}
 
 				try {

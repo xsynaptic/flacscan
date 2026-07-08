@@ -14,6 +14,7 @@ import type { AttemptResult, RecoverItem } from './recover-attempt.js';
 import { countRecoveryAttempted, getRecoveryCandidates } from '../database/queries.js';
 import { checkMountedPaths } from '../discovery.js';
 import { FlacScanError } from '../errors.js';
+import { directoryPrefix } from '../paths.js';
 import { findSpaceViolations, recoveredFilePath } from '../recovery.js';
 import { ensureBinary } from '../shell.js';
 import { installShutdownHandler, isShuttingDown, processPool } from './process-pool.js';
@@ -122,7 +123,9 @@ export async function runRecovery(
 ): Promise<void> {
 	const mountCheck = checkMountedPaths(config.directories);
 	const candidates = rows.filter((row) =>
-		mountCheck.available.some((directory) => row.current_path.startsWith(directory)),
+		mountCheck.available.some((directory) =>
+			row.current_path.startsWith(directoryPrefix(directory)),
+		),
 	);
 	if (candidates.length === 0) {
 		console.log(emptyMessage);

@@ -4,6 +4,8 @@ import type { FlacMetadata } from '../metadata.js';
 import type { ErrorSeverity } from '../verifiers/types.js';
 import type { FileRow, FileStatus, RecoveryResult, UnreadableFileRow } from './types.js';
 
+import { directoryPrefix } from '../paths.js';
+
 // Prepared statements are cached per database handle; re-preparing on every call
 // dominates discovery cost on large collections
 const statementCaches = new WeakMap<Database.Database, Map<string, Database.Statement>>();
@@ -85,7 +87,7 @@ export function getFilesNeedingVerification(
 	const cutoff = new Date(Date.now() - rescanDays * 24 * 60 * 60 * 1000).toISOString();
 
 	const dirClauses = directories.map(() => String.raw`current_path LIKE ? ESCAPE '\'`).join(' OR ');
-	const escapedDirs = directories.map((d) => escapeLikePattern(d) + '%');
+	const escapedDirs = directories.map((dir) => escapeLikePattern(directoryPrefix(dir)) + '%');
 
 	return prepareCached(
 		database,

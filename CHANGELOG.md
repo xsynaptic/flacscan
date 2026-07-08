@@ -1,5 +1,11 @@
 # flacscan
 
+## 2.2.2
+
+### Patch Changes
+
+- Formerly-unreadable files rejoin scanning as soon as they stat again; mid-walk ENOENT is no longer recorded as an issue; directory matching no longer catches sibling directories sharing a prefix; list exits 2 on stdout errors
+
 ## 2.2.1
 
 ### Patch Changes

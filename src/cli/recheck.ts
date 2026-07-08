@@ -17,6 +17,7 @@ import {
 	upsertUnreadableFile,
 } from '../database/queries.js';
 import { checkMountedPaths } from '../discovery.js';
+import { directoryPrefix } from '../paths.js';
 import { ensureBinary } from '../shell.js';
 import { flacVerifier } from '../verifiers/flac/verify.js';
 import { printCorruptFile } from './format-corrupt.js';
@@ -57,7 +58,9 @@ export const recheckCommand = defineCommand({
 				];
 
 				const items = allItems.filter((item) =>
-					mountCheck.available.some((dir) => item.row.current_path.startsWith(dir)),
+					mountCheck.available.some((dir) =>
+						item.row.current_path.startsWith(directoryPrefix(dir)),
+					),
 				);
 
 				if (items.length === 0) {
