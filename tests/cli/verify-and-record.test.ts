@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FileRow } from '../../src/database/types.js';
 import type { FormatVerifier, VerificationResult } from '../../src/verifiers/types.js';
 
+import { isShuttingDown } from '../../src/cli/process-pool.js';
 import { verifyAndRecord } from '../../src/cli/verify-and-record.js';
 import { DEFAULT_CONFIG } from '../../src/config/types.js';
 import { findFileByPath, upsertFile } from '../../src/database/queries.js';
@@ -18,6 +19,10 @@ import { classifyCorruptFile } from '../../src/verifiers/severity.js';
 
 vi.mock('../../src/verifiers/severity.js', () => ({
 	classifyCorruptFile: vi.fn(() => Promise.resolve('critical')),
+}));
+
+vi.mock('../../src/cli/process-pool.js', () => ({
+	isShuttingDown: vi.fn(() => false),
 }));
 
 vi.mock('../../src/metadata.js', () => ({
@@ -219,7 +224,7 @@ describe('verifyAndRecord', () => {
 		}
 	});
 
-	it('records corrupt/unknown when verify throws unexpectedly', async () => {
+	it('rethrows when verify throws unexpectedly, leaving the row pending', async () => {
 		const file = seed();
 		const verifier: FormatVerifier = {
 			extensions: ['.flac'],
@@ -227,15 +232,26 @@ describe('verifyAndRecord', () => {
 			verify: () => Promise.reject(new Error('flac exploded')),
 		};
 
+		await expect(
+			verifyAndRecord(db, DEFAULT_CONFIG, verifier, file, { fix: false }),
+		).rejects.toThrow('flac exploded');
+		expect(classifyCorruptFile).not.toHaveBeenCalled();
+		expect(findFileByPath(db, PATH)!.last_result).toBe('pending');
+	});
+
+	it('returns interrupted without recording when verify throws during shutdown', async () => {
+		vi.mocked(isShuttingDown).mockReturnValueOnce(true);
+		const file = seed();
+		const verifier: FormatVerifier = {
+			extensions: ['.flac'],
+			requiredBinaries: [{ name: 'flac' }],
+			verify: () => Promise.reject(new Error('killed')),
+		};
+
 		const outcome = await verifyAndRecord(db, DEFAULT_CONFIG, verifier, file, { fix: false });
 
-		expect(outcome.kind).toBe('corrupt');
-		if (outcome.kind === 'corrupt') {
-			expect(outcome.severity).toBe('unknown');
-			expect(outcome.errorOutput).toContain('flac exploded');
-		}
-		expect(classifyCorruptFile).not.toHaveBeenCalled();
-		expect(findFileByPath(db, PATH)!.last_result).toBe('corrupt');
+		expect(outcome).toEqual({ kind: 'interrupted' });
+		expect(findFileByPath(db, PATH)!.last_result).toBe('pending');
 	});
 
 	it('returns interrupted without touching the database', async () => {

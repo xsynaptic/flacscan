@@ -1,5 +1,11 @@
 # flacscan
 
+## 2.2.1
+
+### Patch Changes
+
+- Record correct verdicts when flac dies by signal or fails to spawn; never persist an unsuitable recovery verdict during shutdown
+
 ## 2.2.0
 
 ### Minor Changes

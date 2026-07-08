@@ -40,19 +40,9 @@ export async function verifyAndRecord(
 	try {
 		result = await verifier.verify(filePath);
 	} catch (error) {
+		// A throw is a tool failure, not a file verdict; recording corruption would poison the DB
 		if (isShuttingDown()) return { kind: 'interrupted' };
-		const errorOutput = String(error);
-		updateVerificationResult(db, filePath, {
-			error_output: errorOutput,
-			error_severity: 'unknown',
-			last_result: 'corrupt',
-		});
-		return {
-			errorOutput,
-			errorTimestamp: null,
-			kind: 'corrupt',
-			severity: 'unknown',
-		};
+		throw error;
 	}
 
 	if (result.status === 'interrupted') return { kind: 'interrupted' };

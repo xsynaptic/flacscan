@@ -12,10 +12,26 @@ async function verifyFile(filePath: string): Promise<VerificationResult> {
 		await execFile('nice', ['-n', '19', 'flac', '-ts', filePath]);
 		return { status: 'healthy' };
 	} catch (error: unknown) {
-		if (error instanceof Error && 'signal' in error && error.signal) {
+		const signal =
+			error instanceof Error && 'signal' in error ? (error as { signal: unknown }).signal : null;
+		if (signal === 'SIGINT' || signal === 'SIGTERM') {
 			return { status: 'interrupted' };
 		}
-
+		const code =
+			error instanceof Error && 'code' in error ? (error as { code: unknown }).code : null;
+		if (typeof code === 'string') {
+			// Spawn failure (EMFILE/ENOENT) is the OS refusing, not a file verdict
+			throw error;
+		}
+		if (typeof signal === 'string') {
+			// Decoder crash is a verdict about the file
+			const stderr = extractStderr(error);
+			return {
+				errorOutput: `flac terminated by ${signal}${stderr ? `: ${stderr}` : ''}`,
+				errorTimestamp: null,
+				status: 'corrupt',
+			};
+		}
 		const errorOutput = extractStderr(error);
 		return {
 			errorOutput,

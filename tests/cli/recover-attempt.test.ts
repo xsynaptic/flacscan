@@ -169,6 +169,30 @@ describe('attemptRecovery', () => {
 		expect(recoveryResult()).toBeNull();
 	});
 
+	it('does not record a verdict when the re-encode test fails during shutdown', async () => {
+		const item = seed();
+		const unlink = vi.fn(() => Promise.resolve());
+		const shouldStop = vi.fn<() => boolean>();
+		// False at the pre-flight guard, true at the post-testPasses check
+		shouldStop.mockReturnValueOnce(false).mockReturnValue(true);
+		const result = await attemptRecovery(
+			makeEnv({
+				probe: probeBy(1000, 900),
+				shouldStop,
+				testPasses: () => Promise.resolve(false),
+				unlink,
+			}),
+			db,
+			DEFAULT_CONFIG,
+			item,
+		);
+
+		expect(result.kind).toBe('interrupted');
+		expect(unlink).toHaveBeenCalledWith(PARTIAL);
+		expect(findFileByPath(db, SRC)!.recovery_attempted_at).toBeNull();
+		expect(recoveryResult()).toBeNull();
+	});
+
 	it('records unsuitable when the trailing loss exceeds the limit', async () => {
 		const item = seed();
 		const unlink = vi.fn(() => Promise.resolve());

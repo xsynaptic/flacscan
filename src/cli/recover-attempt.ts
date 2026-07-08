@@ -129,6 +129,11 @@ export async function attemptRecovery(
 	}
 
 	const reencodeVerified = await env.testPasses(partial);
+	if (!reencodeVerified && env.shouldStop()) {
+		// A false verdict during shutdown may just be the child killed by SIGINT; don't persist it
+		await env.unlink(partial);
+		return interrupted();
+	}
 	const verdict = classifyRecovery({
 		claimedSamples: format.totalSamples,
 		deliveredSamples: delivered,
