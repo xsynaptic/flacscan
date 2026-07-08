@@ -83,7 +83,7 @@ describe('runVerification', () => {
 		expect(stats?.exitCode).toBe(1);
 		const row = findFileByPath(db, filePath);
 		expect(row?.last_result).toBe('corrupt');
-		expect(row?.error_severity).toBe('unknown');
+		expect(row?.error_severity).toBeNull();
 		expect(logEvents(config.log_path)).toContain('corrupt');
 	});
 

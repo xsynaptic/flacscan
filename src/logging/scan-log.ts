@@ -1,22 +1,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-import type { ErrorSeverity } from '../verifiers/types.js';
-
-export function logCorruption(
-	logPath: string,
-	severity: ErrorSeverity,
-	filePath: string,
-	details: string,
-	known: boolean,
-) {
+export function logCorruption(logPath: string, filePath: string, details: string, known: boolean) {
 	appendEntry(logPath, {
 		details,
 		event: 'corrupt',
 		known,
 		level: 'error',
 		path: filePath,
-		severity,
 	});
 }
 

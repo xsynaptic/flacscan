@@ -1,5 +1,3 @@
-export type ErrorSeverity = 'critical' | 'recoverable' | 'unknown';
-
 export interface FormatVerifier {
 	extensions: string[];
 	fixer?: FormatFixer;

@@ -8,7 +8,6 @@ import ora from 'ora';
 
 import type { FlacScanConfig } from '../config/types.js';
 import type { FileRow } from '../database/types.js';
-import type { ErrorSeverity } from '../verifiers/types.js';
 import type { AttemptResult, RecoverItem } from './recover-attempt.js';
 
 import { countRecoveryAttempted, getRecoveryCandidates } from '../database/queries.js';
@@ -23,12 +22,6 @@ import { flacEngine } from './recover-engine.js';
 import { runCommand } from './run-command.js';
 import { sharedArguments } from './shared-arguments.js';
 
-const SEVERITY_FILTERS = [
-	'critical',
-	'recoverable',
-	'unknown',
-] as const satisfies readonly ErrorSeverity[];
-
 interface ReportEntry {
 	claimedSamples: number;
 	deliveredSamples: null | number;
@@ -36,7 +29,6 @@ interface ReportEntry {
 	lostSamples: null | number;
 	outcome: 'failed' | 'recovered' | 'unsuitable';
 	sampleRate: number;
-	severity: ErrorSeverity | null;
 	src: string;
 }
 
@@ -56,12 +48,6 @@ export const recoverCommand = defineCommand({
 			description: 'Write a per-file recovery report to this file',
 			type: 'string',
 		},
-		severity: {
-			description:
-				'Only consider this severity: critical, recoverable, unknown (default: all corrupt)',
-			required: false,
-			type: 'positional',
-		},
 	},
 	meta: {
 		description:
@@ -70,14 +56,6 @@ export const recoverCommand = defineCommand({
 	},
 	async run({ args }) {
 		installShutdownHandler();
-
-		const severity = args.severity as ErrorSeverity | undefined;
-		if (severity !== undefined && !SEVERITY_FILTERS.includes(severity)) {
-			console.error(`Unknown severity: ${severity}`);
-			console.error(`Valid values: ${SEVERITY_FILTERS.join(', ')}`);
-			process.exitCode = 1;
-			return;
-		}
 
 		await runCommand(
 			args,
@@ -96,7 +74,7 @@ export const recoverCommand = defineCommand({
 					);
 				}
 
-				const rows = getRecoveryCandidates(db, severity ? { severity } : {});
+				const rows = getRecoveryCandidates(db);
 				const emptyMessage =
 					alreadyAttempted === 0
 						? 'No corrupt files to recover.'
@@ -237,7 +215,6 @@ export async function runRecovery(
 			lostSamples: result.lostSamples,
 			outcome,
 			sampleRate: result.sampleRate,
-			severity: item.row.error_severity,
 			src: item.src,
 		});
 	};
@@ -325,7 +302,6 @@ function writeReport(outputFile: string, entries: ReportEntry[]): void {
 		lines.push(
 			[
 				entry.outcome.toUpperCase(),
-				entry.severity ?? '-',
 				`len=${length}`,
 				`kept=${kept}`,
 				`lost=${lost}`,

@@ -95,7 +95,7 @@ export const recheckCommand = defineCommand({
 					const file = item.source === 'files' ? item.row : promoteUnreadable(db, filePath);
 					if (!file) return;
 
-					const outcome = await verifyAndRecord(db, config, flacVerifier, file, { fix: false });
+					const outcome = await verifyAndRecord(db, flacVerifier, file, { fix: false });
 
 					if (outcome.kind === 'interrupted') return;
 
@@ -104,7 +104,7 @@ export const recheckCommand = defineCommand({
 						const isKnown = item.source === 'files' && item.row.acknowledged_at !== null;
 						stats.corrupt++;
 						if (!isKnown) stats.newCorrupt++;
-						printCorruptFile(spinner, filePath, outcome.severity, outcome, { known: isKnown });
+						printCorruptFile(spinner, filePath, outcome, { known: isKnown });
 					} else {
 						stats.healthy++;
 						spinner.clear();

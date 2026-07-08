@@ -1,7 +1,6 @@
 import type Database from 'better-sqlite3';
 
 import type { FlacMetadata } from '../metadata.js';
-import type { ErrorSeverity } from '../verifiers/types.js';
 import type { FileRow, FileStatus, RecoveryResult, UnreadableFileRow } from './types.js';
 
 import { directoryPrefix } from '../paths.js';
@@ -92,16 +91,6 @@ export function getCorruptFilesByAcknowledged(
 	).all() as FileRow[];
 }
 
-export function getCorruptFilesBySeverity(
-	database: Database.Database,
-	severity: ErrorSeverity,
-): FileRow[] {
-	return prepareCached(
-		database,
-		`SELECT * FROM files WHERE last_result = 'corrupt' AND error_severity = ? ORDER BY current_path`,
-	).all(severity) as FileRow[];
-}
-
 export function getFilesNeedingVerification(
 	database: Database.Database,
 	rescanDays: number,
@@ -128,23 +117,14 @@ export function getFilesNeedingVerification(
 	).all(...escapedDirs, cutoff, batchSize) as FileRow[];
 }
 
-export function getRecoveryCandidates(
-	database: Database.Database,
-	options: { severity?: ErrorSeverity } = {},
-): FileRow[] {
+export function getRecoveryCandidates(database: Database.Database): FileRow[] {
 	// Always skips files that already have a recovery outcome; to re-attempt them, clear
 	// their recovery_* columns in SQLite directly. (Avoids carrying a one-off `--retry` flag
 	// on `recover` itself for a workflow that's rare and easy to do with one UPDATE.)
-	const clauses = [`last_result = 'corrupt'`, `recovery_attempted_at IS NULL`];
-	const params: string[] = [];
-	if (options.severity) {
-		clauses.push(`error_severity = ?`);
-		params.push(options.severity);
-	}
 	return prepareCached(
 		database,
-		`SELECT * FROM files WHERE ${clauses.join(' AND ')} ORDER BY current_path`,
-	).all(...params) as FileRow[];
+		`SELECT * FROM files WHERE last_result = 'corrupt' AND recovery_attempted_at IS NULL ORDER BY current_path`,
+	).all() as FileRow[];
 }
 
 export function getStats(database: Database.Database) {
@@ -180,11 +160,6 @@ export function getStats(database: Database.Database) {
 		).get() as { count: number }
 	).count;
 
-	const severityBreakdown = prepareCached(
-		database,
-		`SELECT error_severity, COUNT(*) as count FROM files WHERE last_result = 'corrupt' GROUP BY error_severity`,
-	).all() as { count: number; error_severity: ErrorSeverity | null }[];
-
 	const recoveryBreakdown = prepareCached(
 		database,
 		`SELECT recovery_result, COUNT(*) as count FROM files WHERE last_result = 'corrupt' GROUP BY recovery_result`,
@@ -197,7 +172,6 @@ export function getStats(database: Database.Database) {
 		newUnreadable,
 		pending: countsByResult['pending'] ?? 0,
 		recoveryBreakdown,
-		severityBreakdown,
 		total,
 		unreadable,
 	};
@@ -268,7 +242,6 @@ export function updateVerificationResult(
 	currentPath: string,
 	result: {
 		error_output?: null | string;
-		error_severity?: ErrorSeverity | null;
 		error_timestamp?: null | string;
 		last_result: FileStatus;
 	},
@@ -281,7 +254,7 @@ export function updateVerificationResult(
       last_verified_at = ?,
       last_result = ?,
       acknowledged_at = CASE WHEN ? = 'healthy' THEN NULL ELSE acknowledged_at END,
-      error_severity = ?,
+      error_severity = NULL,
       error_output = ?,
       error_timestamp = ?,
       updated_at = ?
@@ -291,7 +264,6 @@ export function updateVerificationResult(
 		now,
 		result.last_result,
 		result.last_result,
-		result.error_severity ?? null,
 		result.error_output ?? null,
 		result.error_timestamp ?? null,
 		now,

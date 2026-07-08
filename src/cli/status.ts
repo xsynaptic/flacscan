@@ -41,20 +41,6 @@ export const statusCommand = defineCommand({
 				console.log(chalk.green('  No new issues.'));
 			}
 
-			if (stats.severityBreakdown.length > 0) {
-				console.log(chalk.bold('\n  Corruption by severity:'));
-				for (const row of stats.severityBreakdown) {
-					const severity = row.error_severity ?? 'unknown';
-					const color =
-						severity === 'critical'
-							? chalk.red
-							: severity === 'recoverable'
-								? chalk.yellow
-								: chalk.dim;
-					console.log(`    ${color(severity)}: ${String(row.count)}`);
-				}
-			}
-
 			if (stats.recoveryBreakdown.some((row) => row.recovery_result !== null)) {
 				console.log(chalk.bold('\n  Recovery:'));
 				for (const row of stats.recoveryBreakdown) {

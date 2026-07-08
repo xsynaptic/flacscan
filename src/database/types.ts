@@ -1,5 +1,3 @@
-import type { ErrorSeverity } from '../verifiers/types.js';
-
 export interface FileRow {
 	acknowledged_at: null | string;
 	album: null | string;
@@ -8,7 +6,7 @@ export interface FileRow {
 	date: null | string;
 	duration: null | number;
 	error_output: null | string;
-	error_severity: ErrorSeverity | null;
+	error_severity: null | string;
 	error_timestamp: null | string;
 	file_mtime: null | string;
 	file_size: null | number;

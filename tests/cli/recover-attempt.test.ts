@@ -59,7 +59,7 @@ function makeEnv(overrides: Partial<RecoveryEnv>): RecoveryEnv {
 
 function seed(src = SRC): RecoverItem {
 	upsertFile(db, { current_path: src, file_mtime: null, file_size: null });
-	updateVerificationResult(db, src, { error_severity: 'recoverable', last_result: 'corrupt' });
+	updateVerificationResult(db, src, { last_result: 'corrupt' });
 	return {
 		atimeMs: 1000,
 		dest: DEST,

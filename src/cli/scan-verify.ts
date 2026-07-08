@@ -66,7 +66,7 @@ export async function runVerification(
 			return;
 		}
 
-		const outcome = await verifyAndRecord(db, config, verifier, file, { fix: config.fix });
+		const outcome = await verifyAndRecord(db, verifier, file, { fix: config.fix });
 
 		if (outcome.kind === 'interrupted') return;
 
@@ -96,12 +96,11 @@ export async function runVerification(
 			const isKnown = file.acknowledged_at !== null;
 			logCorruption(
 				config.log_path,
-				outcome.severity,
 				file.current_path,
 				outcome.errorOutput.replaceAll('\n', ' '),
 				isKnown,
 			);
-			printCorruptFile(spinner, file.current_path, outcome.severity, outcome, { known: isKnown });
+			printCorruptFile(spinner, file.current_path, outcome, { known: isKnown });
 			stats.corrupt++;
 			if (!isKnown) {
 				stats.newCorrupt++;

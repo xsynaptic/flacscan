@@ -1,5 +1,11 @@
 # flacscan
 
+## 4.0.0
+
+### Major Changes
+
+- Removed scan-time severity prediction (critical/recoverable/unknown) and its CLI surface (list/recover severity filters, status breakdown); recover itself now solely decides recoverability at run time
+
 ## 3.0.0
 
 ### Major Changes

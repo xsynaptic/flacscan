@@ -36,7 +36,7 @@ function seedCorrupt(name: string): string {
 	const filePath = path.join(tempDir, name);
 	fs.writeFileSync(filePath, 'x'.repeat(1024));
 	upsertFile(db, { current_path: filePath, file_mtime: null, file_size: null });
-	updateVerificationResult(db, filePath, { error_severity: 'recoverable', last_result: 'corrupt' });
+	updateVerificationResult(db, filePath, { last_result: 'corrupt' });
 	return filePath;
 }
 

@@ -4,9 +4,7 @@ import { execFile, extractStderr } from '../../shell.js';
 import { hasId3Tags, stripId3Tags } from './fix-id3.js';
 
 // The verifier only identifies failure; it captures stderr and the offset where decoding
-// first failed. Severity (`recoverable`/`critical`/`unknown`) is decided by the caller via
-// `classifyCorruptFile` in `src/verifiers/severity.ts`, which has config + can probe with
-// metaflac to compute the actual scan-time prediction of `recover`'s outcome.
+// first failed. Whether a corrupt file is salvageable is decided later by `recover`.
 async function verifyFile(filePath: string): Promise<VerificationResult> {
 	try {
 		await execFile('nice', ['-n', '19', 'flac', '-ts', filePath]);

@@ -31,7 +31,7 @@ describe('scan-log', () => {
 	it('writes one parseable corruption line', () => {
 		const logPath = uniqueLogPath('a.log');
 
-		logCorruption(logPath, 'critical', '/music/bad.flac', 'decode error', false);
+		logCorruption(logPath, '/music/bad.flac', 'decode error', false);
 
 		const lines = readLines(logPath);
 		expect(lines).toHaveLength(1);
@@ -42,7 +42,6 @@ describe('scan-log', () => {
 			known: false,
 			level: 'error',
 			path: '/music/bad.flac',
-			severity: 'critical',
 		});
 		const timestamp = Date.parse(String(entry.timestamp));
 		expect(Number.isNaN(timestamp)).toBe(false);
@@ -51,8 +50,8 @@ describe('scan-log', () => {
 	it('appends a separate line per call', () => {
 		const logPath = uniqueLogPath('b.log');
 
-		logCorruption(logPath, 'critical', '/music/one.flac', 'first', false);
-		logCorruption(logPath, 'recoverable', '/music/two.flac', 'second', true);
+		logCorruption(logPath, '/music/one.flac', 'first', false);
+		logCorruption(logPath, '/music/two.flac', 'second', true);
 
 		const lines = readLines(logPath);
 		expect(lines).toHaveLength(2);
@@ -63,7 +62,7 @@ describe('scan-log', () => {
 	it('creates the parent directory when missing', () => {
 		const logPath = uniqueLogPath('nested', 'deeper', 'c.log');
 
-		logCorruption(logPath, 'unknown', '/music/x.flac', 'boom', false);
+		logCorruption(logPath, '/music/x.flac', 'boom', false);
 
 		expect(fs.existsSync(logPath)).toBe(true);
 	});

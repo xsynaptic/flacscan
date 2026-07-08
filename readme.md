@@ -30,11 +30,10 @@ flacscan scan                        # run one verification batch
 flacscan recheck                     # re-verify all known bad files, prune deleted entries
 flacscan accept                      # accept current issues; future runs alarm only on new ones
 flacscan recover                     # re-encode salvageable corrupt files alongside the originals
-flacscan recover recoverable         # filter: critical, recoverable, unknown
 flacscan status                      # collection health overview
 flacscan report                      # dump all known issues (--output file.txt)
 flacscan list                        # file paths to stdout for scripting
-flacscan list new                    # filters: new, accepted, critical, recoverable, unknown, unreadable
+flacscan list new                    # filters: new, accepted, unreadable
 flacscan list --json                 # structured JSON per issue (combine with a filter)
 ```
 
@@ -95,24 +94,16 @@ An initial scan of a large collection often finds standing damage (files that ar
 
 ### File categories
 
-| Category       | Meaning                                                                 |
-| -------------- | ----------------------------------------------------------------------- |
-| **healthy**    | Passed `flac -t` (full decode + CRC + MD5 verification)                 |
-| **corrupt**    | Failed `flac -t`; classified as `critical`, `recoverable`, or `unknown` |
-| **unreadable** | File couldn't be stat'd during discovery                                |
-| **pending**    | Discovered but not yet verified                                         |
-
-Severity predicts whether `recover` can salvage the file: each corrupt file's length is probed with `metaflac` and run through `recover`'s own accept/reject rule.
-
-- **recoverable** - `recover` can salvage it (damage confined to a short tail)
-- **critical** - `recover` can't help (loss too large, or the whole stream decodes); re-acquire
-- **unknown** - couldn't probe the file's length (often `metaflac` can't read it either)
-
-The prediction uses `recover_max_trailing_loss_seconds`, so changing that threshold leaves stored severities stale until a re-scan or `flacscan recheck`.
+| Category       | Meaning                                                    |
+| -------------- | ---------------------------------------------------------- |
+| **healthy**    | Passed `flac -t` (full decode + CRC + MD5 verification)    |
+| **corrupt**    | Failed `flac -t`; run `recover` to see what is salvageable |
+| **unreadable** | File couldn't be stat'd during discovery                   |
+| **pending**    | Discovered but not yet verified                            |
 
 ### Recovering files
 
-`flacscan recover` re-encodes the clean leading audio of a corrupt file into `Track [Recovered].flac` next to the original, which is never modified. It writes a file only when the damage is provably confined to the tail, the lost stretch is under `recover_max_trailing_loss_seconds` (default 3, or `--max-trailing-loss`), and the re-encode passes `flac -t`; anything else is skipped and reported. Standard tags and front cover are carried over. Each file is attempted once and the verdict stored, so re-runs skip it. Pass a severity to narrow scope, `--output file.txt` for a per-file report.
+`flacscan recover` re-encodes the clean leading audio of a corrupt file into `Track [Recovered].flac` next to the original, which is never modified. It writes a file only when the damage is provably confined to the tail, the lost stretch is under `recover_max_trailing_loss_seconds` (default 3, or `--max-trailing-loss`), and the re-encode passes `flac -t`; anything else is skipped and reported. Standard tags and front cover are carried over. Whether a file is salvageable is decided here at recover time, not during a scan. Each file is attempted once and the verdict stored, so re-runs skip it. Pass `--output file.txt` for a per-file report.
 
 ### Trade-offs
 

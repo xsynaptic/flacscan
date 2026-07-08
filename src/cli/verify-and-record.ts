@@ -2,13 +2,11 @@ import type Database from 'better-sqlite3';
 
 import fs from 'node:fs';
 
-import type { FlacScanConfig } from '../config/types.js';
 import type { FileRow } from '../database/types.js';
-import type { ErrorSeverity, FormatVerifier, VerificationResult } from '../verifiers/types.js';
+import type { FormatVerifier, VerificationResult } from '../verifiers/types.js';
 
 import { updateMetadata, updateVerificationResult, upsertFile } from '../database/queries.js';
 import { extractMetadata } from '../metadata.js';
-import { classifyCorruptFile } from '../verifiers/severity.js';
 import { isShuttingDown } from './process-pool.js';
 
 type FixAnnotation =
@@ -20,7 +18,6 @@ type VerifyOutcome =
 			errorTimestamp: null | string;
 			fix?: FixAnnotation;
 			kind: 'corrupt';
-			severity: ErrorSeverity;
 	  }
 	| { kind: 'fixed'; label: string }
 	| { kind: 'healthy' }
@@ -28,7 +25,6 @@ type VerifyOutcome =
 
 export async function verifyAndRecord(
 	db: Database.Database,
-	config: FlacScanConfig,
 	verifier: FormatVerifier,
 	file: FileRow,
 	opts: { fix: boolean },
@@ -83,15 +79,8 @@ export async function verifyAndRecord(
 	}
 
 	// Record the original verify error, not the post-fix re-verify's
-	const severity = await classifyCorruptFile(
-		filePath,
-		result.errorOutput,
-		result.errorTimestamp,
-		config,
-	);
 	updateVerificationResult(db, filePath, {
 		error_output: result.errorOutput,
-		error_severity: severity,
 		error_timestamp: result.errorTimestamp,
 		last_result: 'corrupt',
 	});
@@ -105,7 +94,6 @@ export async function verifyAndRecord(
 		errorOutput: result.errorOutput,
 		errorTimestamp: result.errorTimestamp,
 		kind: 'corrupt',
-		severity,
 		...(annotation && { fix: annotation }),
 	};
 }

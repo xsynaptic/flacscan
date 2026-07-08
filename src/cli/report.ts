@@ -14,7 +14,6 @@ function formatReport(useColor: boolean) {
 		bold: useColor ? chalk.bold : (s: string) => s,
 		dim: useColor ? chalk.dim : (s: string) => s,
 		red: useColor ? chalk.red : (s: string) => s,
-		yellow: useColor ? chalk.yellow : (s: string) => s,
 	};
 	return c;
 }
@@ -53,10 +52,7 @@ export const reportCommand = defineCommand({
 				if (files.length === 0) return;
 				write(c.bold(`  ${heading} (${String(files.length)}):\n`));
 				for (const file of files) {
-					const severity = file.error_severity ?? 'unknown';
-					const severityColor =
-						severity === 'critical' ? c.red : severity === 'recoverable' ? c.yellow : c.dim;
-					write(`    ${severityColor(`[${severity}]`)} ${file.current_path}`);
+					write(`    ${c.red('[corrupt]')} ${file.current_path}`);
 					if (file.error_timestamp) {
 						write(`      Glitch at: ${file.error_timestamp}`);
 					}

@@ -7,7 +7,6 @@ import {
 	getAllUnreadableFiles,
 	getCorruptFiles,
 	getCorruptFilesByAcknowledged,
-	getCorruptFilesBySeverity,
 	getUnreadableFilesByAcknowledged,
 } from '../database/queries.js';
 import { runCommand } from './run-command.js';
@@ -40,14 +39,7 @@ interface UnreadableJsonEntry {
 	type: 'unreadable';
 }
 
-const VALID_FILTERS = [
-	'accepted',
-	'critical',
-	'new',
-	'recoverable',
-	'unknown',
-	'unreadable',
-] as const;
+const VALID_FILTERS = ['accepted', 'new', 'unreadable'] as const;
 type Filter = (typeof VALID_FILTERS)[number];
 
 function deriveInputText(file: FileRow): string {
@@ -101,7 +93,7 @@ export const listCommand = defineCommand({
 	args: {
 		...sharedArguments,
 		filter: {
-			description: 'Filter: new, accepted, critical, recoverable, unknown, unreadable',
+			description: 'Filter: new, accepted, unreadable',
 			required: false,
 			type: 'positional',
 		},
@@ -163,22 +155,6 @@ export const listCommand = defineCommand({
 					];
 					paths.sort((a, b) => a.localeCompare(b));
 					for (const filePath of paths) process.stdout.write(filePath + '\n');
-				}
-				return;
-			}
-
-			if (filter) {
-				const files = getCorruptFilesBySeverity(db, filter);
-				if (jsonOutput) {
-					process.stdout.write(
-						JSON.stringify(
-							files.map((f) => toCorruptJson(f)),
-							null,
-							2,
-						) + '\n',
-					);
-				} else {
-					for (const file of files) process.stdout.write(file.current_path + '\n');
 				}
 				return;
 			}

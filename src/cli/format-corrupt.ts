@@ -1,13 +1,10 @@
 import chalk from 'chalk';
 
-import type { ErrorSeverity } from '../verifiers/types.js';
-
 const ERROR_CODE_PATTERN = /error code \d+:(\S+)/;
 
 export function printCorruptFile(
 	spinner: { clear(): void },
 	filePath: string,
-	severity: ErrorSeverity,
 	result: { errorOutput: string; errorTimestamp: null | string },
 	opts: { known: boolean },
 ): void {
@@ -15,10 +12,9 @@ export function printCorruptFile(
 	const location = result.errorTimestamp ? ` (${result.errorTimestamp})` : '';
 	spinner.clear();
 	if (opts.known) {
-		console.log(chalk.dim(`  CORRUPT (accepted) [${severity}] ${filePath}`));
+		console.log(chalk.dim(`  CORRUPT (accepted) ${filePath}`));
 	} else {
-		const severityColor = severity === 'recoverable' ? chalk.yellow : chalk.red;
-		console.log(severityColor(`  NEW CORRUPT [${severity}] ${filePath}`));
+		console.log(chalk.red(`  NEW CORRUPT ${filePath}`));
 	}
 	console.log(chalk.dim(`          ${firstError}${location}`));
 }
