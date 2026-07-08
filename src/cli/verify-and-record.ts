@@ -12,8 +12,7 @@ import { classifyCorruptFile } from '../verifiers/severity.js';
 import { isShuttingDown } from './process-pool.js';
 
 type FixAnnotation =
-	| { error: string; label: string; state: 'failed' }
-	| { label: string; state: 'detected' };
+	{ error: string; label: string; state: 'failed' } | { label: string; state: 'detected' };
 
 type VerifyOutcome =
 	| {

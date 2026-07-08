@@ -27,8 +27,7 @@ import { sharedArguments } from './shared-arguments.js';
 import { verifyAndRecord } from './verify-and-record.js';
 
 type RecheckItem =
-	| { row: FileRow; source: 'files' }
-	| { row: UnreadableFileRow; source: 'unreadable' };
+	{ row: FileRow; source: 'files' } | { row: UnreadableFileRow; source: 'unreadable' };
 
 export const recheckCommand = defineCommand({
 	args: {

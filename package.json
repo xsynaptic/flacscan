@@ -51,18 +51,18 @@
 		"@eslint/js": "^10.0.1",
 		"@types/better-sqlite3": "^7.6.13",
 		"@types/node": "^24.13.2",
-		"eslint": "^10.5.0",
+		"eslint": "^10.6.0",
 		"eslint-config-prettier": "^10.1.8",
-		"eslint-plugin-perfectionist": "^5.9.1",
-		"eslint-plugin-unicorn": "^68.0.0",
+		"eslint-plugin-perfectionist": "^5.10.0",
+		"eslint-plugin-unicorn": "^71.1.0",
 		"jiti": "^2.7.0",
-		"knip": "^6.18.0",
-		"prettier": "^3.8.4",
+		"knip": "^6.25.0",
+		"prettier": "^3.9.4",
 		"tsdown": "^0.22.3",
-		"tsx": "^4.22.4",
+		"tsx": "^4.23.0",
 		"typescript": "^6.0.3",
-		"typescript-eslint": "^8.62.0",
-		"vitest": "^4.1.9"
+		"typescript-eslint": "^8.63.0",
+		"vitest": "^4.1.10"
 	},
 	"knip": {
 		"ignoreBinaries": [

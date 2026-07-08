@@ -55,8 +55,7 @@ export function findFileByPath(
 	currentPath: string,
 ): FileRow | undefined {
 	return prepareCached(database, `SELECT * FROM files WHERE current_path = ?`).get(currentPath) as
-		| FileRow
-		| undefined;
+		FileRow | undefined;
 }
 
 export function findUnreadableByPath(
