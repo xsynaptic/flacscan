@@ -106,6 +106,31 @@ describe('loadConfig', () => {
 		expect(loadConfig({ config, fix: true }).fix).toBe(true);
 	});
 
+	it('defaults notify to false', () => {
+		const config = writeConfig(tempDir, 'directories:\n  - /m');
+
+		expect(loadConfig({ config }).notify).toBe(DEFAULT_CONFIG.notify);
+		expect(loadConfig({ config }).notify).toBe(false);
+	});
+
+	it('accepts notify: true from the file', () => {
+		const config = writeConfig(tempDir, 'directories:\n  - /m\nnotify: true');
+
+		expect(loadConfig({ config }).notify).toBe(true);
+	});
+
+	it('throws when notify is a non-boolean', () => {
+		const config = writeConfig(tempDir, "directories:\n  - /m\nnotify: 'yes'");
+
+		expect(() => loadConfig({ config })).toThrow(/notify/);
+	});
+
+	it('lets CLI notify override file notify: false', () => {
+		const config = writeConfig(tempDir, 'directories:\n  - /m\nnotify: false');
+
+		expect(loadConfig({ config, notify: true }).notify).toBe(true);
+	});
+
 	it('warns on an unknown key without throwing', () => {
 		const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 		const config = writeConfig(tempDir, 'directories:\n  - /m\nrecover_max_trailing_loss: 3');

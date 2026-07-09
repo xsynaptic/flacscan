@@ -17,6 +17,7 @@ interface CliArgs {
 	'log-path'?: string | undefined;
 	'max-trailing-loss'?: string | undefined;
 	'min-free-bytes'?: string | undefined;
+	notify?: boolean | string | undefined;
 	parallelism?: string | undefined;
 	'rescan-days'?: string | undefined;
 }
@@ -50,6 +51,7 @@ export function loadConfig(cliArgs: CliArgs): FlacScanConfig {
 			parseNumeric(cliArgs['min-free-bytes'], 'min-free-bytes') ??
 			fileConfig.min_free_bytes ??
 			DEFAULT_CONFIG.min_free_bytes,
+		notify: cliArgs.notify === true ? true : (fileConfig.notify ?? DEFAULT_CONFIG.notify),
 		parallelism:
 			parseNumeric(cliArgs.parallelism, 'parallelism') ??
 			fileConfig.parallelism ??
@@ -91,6 +93,7 @@ const KNOWN_KEYS = new Set([
 	'fix',
 	'log_path',
 	'min_free_bytes',
+	'notify',
 	'parallelism',
 	'recover_max_trailing_loss_seconds',
 	'rescan_interval_days',
@@ -194,6 +197,14 @@ function validateFileConfig(parsed: unknown, configPath: string): Partial<FlacSc
 			throw new FlacScanError(`Invalid value for fix in ${configPath} (must be true or false)`);
 		}
 		result.fix = value;
+	}
+
+	if ('notify' in source) {
+		const value = source.notify;
+		if (typeof value !== 'boolean') {
+			throw new FlacScanError(`Invalid value for notify in ${configPath} (must be true or false)`);
+		}
+		result.notify = value;
 	}
 
 	for (const key of STRING_KEYS) {

@@ -3,6 +3,7 @@ import ora from 'ora';
 
 import { discoverFiles } from '../discovery.js';
 import { logScanComplete, logScanStart } from '../logging/scan-log.js';
+import { sendNotification } from '../notify.js';
 import { ensureBinary } from '../shell.js';
 import { flacVerifier } from '../verifiers/flac/verify.js';
 import { installShutdownHandler, isShuttingDown } from './process-pool.js';
@@ -24,6 +25,10 @@ export const scanCommand = defineCommand({
 		},
 		fix: {
 			description: 'Fix issues where possible (ID3 tag stripping)',
+			type: 'boolean',
+		},
+		notify: {
+			description: 'Send a macOS notification when new corruption is found',
 			type: 'boolean',
 		},
 		parallelism: {
@@ -106,6 +111,14 @@ export const scanCommand = defineCommand({
 							verificationStats.pruned
 						: 0,
 				});
+
+				const newCorrupt = verificationStats?.newCorrupt ?? 0;
+				if (config.notify && newCorrupt > 0) {
+					await sendNotification(
+						'flacscan',
+						`${String(newCorrupt)} new corrupt file(s) found. Run "flacscan report" for details.`,
+					);
+				}
 
 				process.exitCode = verificationStats?.exitCode ?? 0;
 			},

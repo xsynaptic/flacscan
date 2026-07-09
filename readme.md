@@ -56,6 +56,7 @@ Every command accepts:
 | `--parallelism <n>`  | 1           |
 | `--rescan-days <n>`  | 90          |
 | `--fix`              | off         |
+| `--notify`           | off         |
 
 `recover` adds:
 
@@ -111,6 +112,60 @@ An initial scan of a large collection often finds standing damage (files that ar
 - **Batch model** - designed for low, predictable resource usage rather than scanning everything at once. A single run touches at most `batch_size` files.
 - **No metadata extraction during discovery** - discovery only checks mtime/size via `stat`, not FLAC headers (artist/title/etc. are read later, only for files that turn up corrupt). This keeps discovery fast but means the tool can't detect files that were silently corrupted without a mtime change (_e.g._, bitrot on a filesystem that doesn't update mtime). The periodic rescan interval mitigates this.
 - **Graceful shutdown** - Ctrl+C finishes in-flight workers before exiting. A second Ctrl+C force-quits.
+
+## Scheduling
+
+Run `flacscan scan` on an interval so corruption surfaces soon after it happens. Each run verifies one batch and exits: exit 0 means nothing new, exit 1 means new corruption you haven't accepted. Pair it with `--notify` to get a macOS banner on that event instead of having to read the log.
+
+`PATH` in the scheduled environment must include the directory holding `flac` (Homebrew installs it at `/opt/homebrew/bin`). The first notification may need approval under System Settings → Notifications for the invoking context (Script Editor / osascript).
+
+### launchd (macOS)
+
+Save this as `~/Library/LaunchAgents/com.flacscan.scan.plist`, replacing the `node` and `flacscan` paths with your own (`which node`, `which flacscan`) and adjusting the interval:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.flacscan.scan</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/opt/homebrew/bin/node</string>
+		<string>/opt/homebrew/bin/flacscan</string>
+		<string>scan</string>
+		<string>--notify</string>
+	</array>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>/opt/homebrew/bin:/usr/bin:/bin</string>
+	</dict>
+	<key>StartCalendarInterval</key>
+	<dict>
+		<key>Hour</key>
+		<integer>4</integer>
+		<key>Minute</key>
+		<integer>0</integer>
+	</dict>
+	<key>StandardOutPath</key>
+	<string>/tmp/flacscan.launchd.log</string>
+	<key>StandardErrorPath</key>
+	<string>/tmp/flacscan.launchd.log</string>
+</dict>
+</plist>
+```
+
+Load it with `launchctl load ~/Library/LaunchAgents/com.flacscan.scan.plist` (`launchctl unload ...` to stop).
+
+### cron
+
+```cron
+0 4 * * * /opt/homebrew/bin/flacscan scan --notify
+```
+
+Same `PATH` caveat applies; set it in the crontab or wrap the command in a small script that exports it.
 
 ## License
 
