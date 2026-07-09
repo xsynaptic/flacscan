@@ -8,9 +8,11 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { runDiscovery } from '../../src/cli/scan-discover.js';
 import {
+	acknowledgeAllIssues,
 	findFileByPath,
 	findUnreadableByPath,
 	recordRecoveryOutcome,
+	updateVerificationResult,
 	upsertFile,
 	upsertUnreadableFile,
 } from '../../src/database/queries.js';
@@ -42,9 +44,9 @@ describe('runDiscovery', () => {
 		const filePath = touch('new.flac');
 		const stat = fs.statSync(filePath);
 
-		const stats = await runDiscovery(db, [filePath], makeTestConfig(tempDir));
+		const stats = await runDiscovery(db, [filePath], makeTestConfig(tempDir), [tempDir]);
 
-		expect(stats).toEqual({ processed: 1, skipped: 0, unreadable: 0 });
+		expect(stats).toEqual({ moved: 0, processed: 1, skipped: 0, unreadable: 0 });
 		const row = findFileByPath(db, filePath);
 		expect(row?.last_result).toBe('pending');
 		expect(row?.file_size).toBe(stat.size);
@@ -55,10 +57,10 @@ describe('runDiscovery', () => {
 		const filePath = touch('same.flac');
 		const config = makeTestConfig(tempDir);
 
-		await runDiscovery(db, [filePath], config);
+		await runDiscovery(db, [filePath], config, [tempDir]);
 		const firstUpdatedAt = findFileByPath(db, filePath)?.updated_at;
 
-		const stats = await runDiscovery(db, [filePath], config);
+		const stats = await runDiscovery(db, [filePath], config, [tempDir]);
 
 		expect(stats.skipped).toBe(1);
 		expect(findFileByPath(db, filePath)?.updated_at).toBe(firstUpdatedAt);
@@ -77,7 +79,7 @@ describe('runDiscovery', () => {
 			result: 'recovered',
 		});
 
-		await runDiscovery(db, [filePath], makeTestConfig(tempDir));
+		await runDiscovery(db, [filePath], makeTestConfig(tempDir), [tempDir]);
 
 		const row = findFileByPath(db, filePath);
 		expect(row?.last_result).toBe('pending');
@@ -91,7 +93,7 @@ describe('runDiscovery', () => {
 		const missing = path.join(tempDir, 'gone.flac');
 		const config = makeTestConfig(tempDir);
 
-		const stats = await runDiscovery(db, [missing], config);
+		const stats = await runDiscovery(db, [missing], config, [tempDir]);
 
 		expect(stats.unreadable).toBe(0);
 		expect(findFileByPath(db, missing)).toBeUndefined();
@@ -105,7 +107,7 @@ describe('runDiscovery', () => {
 		const badPath = path.join(blocker, 'child.flac');
 		const config = makeTestConfig(tempDir);
 
-		const stats = await runDiscovery(db, [badPath], config);
+		const stats = await runDiscovery(db, [badPath], config, [tempDir]);
 
 		expect(stats.unreadable).toBe(1);
 		expect(findUnreadableByPath(db, badPath)).toBeDefined();
@@ -122,10 +124,91 @@ describe('runDiscovery', () => {
 			filePath,
 		);
 
-		const stats = await runDiscovery(db, [filePath], makeTestConfig(tempDir));
+		const stats = await runDiscovery(db, [filePath], makeTestConfig(tempDir), [tempDir]);
 
 		expect(stats.skipped).toBe(0);
 		expect(findFileByPath(db, filePath)?.last_result).toBe('pending');
 		expect(findUnreadableByPath(db, filePath)).toBeUndefined();
+	});
+});
+
+describe('runDiscovery move migration', () => {
+	it('migrates a renamed file, carrying its verdict and acknowledgement without re-verifying', async () => {
+		const oldPath = touch('old.flac');
+		const config = makeTestConfig(tempDir);
+		await runDiscovery(db, [oldPath], config, [tempDir]);
+		updateVerificationResult(db, oldPath, { error_output: 'boom', last_result: 'corrupt' });
+		acknowledgeAllIssues(db);
+		const before = findFileByPath(db, oldPath)!;
+
+		const newPath = path.join(tempDir, 'renamed.flac');
+		fs.renameSync(oldPath, newPath);
+
+		const stats = await runDiscovery(db, [newPath], config, [tempDir]);
+
+		expect(stats.moved).toBe(1);
+		expect(findFileByPath(db, oldPath)).toBeUndefined();
+		const after = findFileByPath(db, newPath)!;
+		expect(after.last_result).toBe('corrupt');
+		expect(after.error_output).toBe('boom');
+		expect(after.acknowledged_at).toBe(before.acknowledged_at);
+		expect(after.last_verified_at).toBe(before.last_verified_at);
+		const logLines = fs.readFileSync(config.log_path, 'utf8').trim().split('\n');
+		expect(JSON.parse(logLines.at(-1) ?? '')).toMatchObject({
+			event: 'moved',
+			from: oldPath,
+			path: newPath,
+		});
+	});
+
+	it('treats a copy (original still present) as a new file, not a move', async () => {
+		const origPath = touch('orig.flac');
+		const config = makeTestConfig(tempDir);
+		await runDiscovery(db, [origPath], config, [tempDir]);
+		const origStat = fs.statSync(origPath);
+
+		const copyPath = path.join(tempDir, 'copy.flac');
+		fs.writeFileSync(copyPath, 'data');
+		fs.utimesSync(copyPath, origStat.atime, origStat.mtime);
+
+		const stats = await runDiscovery(db, [copyPath], config, [tempDir]);
+
+		expect(stats.moved).toBe(0);
+		expect(findFileByPath(db, origPath)).toBeDefined();
+		expect(findFileByPath(db, copyPath)?.last_result).toBe('pending');
+	});
+
+	it('does not migrate when two rows share the same size and mtime (ambiguous)', async () => {
+		const aPath = touch('a.flac');
+		const bPath = touch('b.flac');
+		const config = makeTestConfig(tempDir);
+		const mtime = fs.statSync(aPath).mtime;
+		fs.utimesSync(bPath, mtime, mtime);
+		await runDiscovery(db, [aPath, bPath], config, [tempDir]);
+
+		const cPath = path.join(tempDir, 'c.flac');
+		fs.renameSync(aPath, cPath);
+
+		const stats = await runDiscovery(db, [cPath], config, [tempDir]);
+
+		expect(stats.moved).toBe(0);
+		expect(findFileByPath(db, aPath)).toBeDefined();
+		expect(findFileByPath(db, cPath)?.last_result).toBe('pending');
+	});
+
+	it('does not migrate when the candidate old path is not under an available root', async () => {
+		const newPath = touch('arrived.flac');
+		const stat = fs.statSync(newPath);
+		upsertFile(db, {
+			current_path: '/somewhere/offline/gone.flac',
+			file_mtime: stat.mtime.toISOString(),
+			file_size: stat.size,
+		});
+
+		const stats = await runDiscovery(db, [newPath], makeTestConfig(tempDir), [tempDir]);
+
+		expect(stats.moved).toBe(0);
+		expect(findFileByPath(db, newPath)?.last_result).toBe('pending');
+		expect(findFileByPath(db, '/somewhere/offline/gone.flac')).toBeDefined();
 	});
 });

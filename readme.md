@@ -108,7 +108,7 @@ An initial scan of a large collection often finds standing damage (files that ar
 
 ### Trade-offs
 
-- **Path-keyed database** - files are tracked by their full path. Renames or moves are treated as a new file + a stale entry. `recheck` prunes stale entries when the old path no longer exists.
+- **Path-keyed database** - files are tracked by their full path. A rename or move is migrated in place when it's unambiguous (same size and mtime, exactly one candidate row, and the old path is gone from a mounted volume), carrying the file's verdict and acknowledgement to the new path. Ambiguous cases (duplicate size+mtime, or the old path on an offline volume) fall back to a new file plus a stale entry, which `recheck` prunes once the old path no longer exists.
 - **Batch model** - designed for low, predictable resource usage rather than scanning everything at once. A single run touches at most `batch_size` files.
 - **No metadata extraction during discovery** - discovery only checks mtime/size via `stat`, not FLAC headers (artist/title/etc. are read later, only for files that turn up corrupt). This keeps discovery fast but means the tool can't detect files that were silently corrupted without a mtime change (_e.g._, bitrot on a filesystem that doesn't update mtime). The periodic rescan interval mitigates this.
 - **Graceful shutdown** - Ctrl+C finishes in-flight workers before exiting. A second Ctrl+C force-quits.

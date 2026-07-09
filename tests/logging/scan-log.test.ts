@@ -3,7 +3,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { logCorruption, logScanComplete, logScanStart } from '../../src/logging/scan-log.js';
+import {
+	logCorruption,
+	logFileMoved,
+	logScanComplete,
+	logScanStart,
+} from '../../src/logging/scan-log.js';
 
 let tempDir: string;
 
@@ -65,6 +70,20 @@ describe('scan-log', () => {
 		logCorruption(logPath, '/music/x.flac', 'boom', false);
 
 		expect(fs.existsSync(logPath)).toBe(true);
+	});
+
+	it('records a move with from and to paths', () => {
+		const logPath = uniqueLogPath('moved.log');
+
+		logFileMoved(logPath, '/music/old.flac', '/music/new.flac');
+
+		const entry = parseLine(readLines(logPath)[0] ?? '');
+		expect(entry).toMatchObject({
+			event: 'moved',
+			from: '/music/old.flac',
+			level: 'info',
+			path: '/music/new.flac',
+		});
 	});
 
 	it('round-trips scan start and complete payloads', () => {

@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS files (
 
 const CREATE_FILES_INDEXES = `
 CREATE INDEX IF NOT EXISTS idx_last_verified ON files (last_result, last_verified_at);
+CREATE INDEX IF NOT EXISTS idx_size_mtime ON files (file_size, file_mtime);
 `;
 
 const CREATE_UNREADABLE_FILES_TABLE = `

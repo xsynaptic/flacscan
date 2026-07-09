@@ -11,6 +11,7 @@ import {
 	countRecoveryAttempted,
 	deleteFileByPath,
 	findFileByPath,
+	findFilesBySizeAndMtime,
 	findUnreadableByPath,
 	getCorruptFiles,
 	getCorruptFilesByAcknowledged,
@@ -19,6 +20,7 @@ import {
 	getStats,
 	getUnreadableFilesByAcknowledged,
 	recordRecoveryOutcome,
+	updateFilePath,
 	updateVerificationResult,
 	upsertFile,
 	upsertUnreadableFile,
@@ -488,6 +490,58 @@ describe('findFileByPath', () => {
 
 	it('returns undefined when not found', () => {
 		expect(findFileByPath(db, '/nonexistent.flac')).toBeUndefined();
+	});
+});
+
+describe('findFilesBySizeAndMtime', () => {
+	const MTIME = '2025-01-01T00:00:00.000Z';
+
+	it('matches rows with the exact size and mtime', () => {
+		insertFile({ current_path: '/music/a.flac', file_mtime: MTIME, file_size: 1000 });
+		insertFile({ current_path: '/music/b.flac', file_mtime: MTIME, file_size: 1000 });
+		insertFile({ current_path: '/music/c.flac', file_mtime: MTIME, file_size: 2000 });
+
+		const matches = findFilesBySizeAndMtime(db, 1000, MTIME);
+		expect(matches.map((file) => file.current_path).toSorted((a, b) => a.localeCompare(b))).toEqual(
+			['/music/a.flac', '/music/b.flac'],
+		);
+	});
+
+	it('does not match on a differing size or mtime', () => {
+		insertFile({ current_path: '/music/a.flac', file_mtime: MTIME, file_size: 1000 });
+
+		expect(findFilesBySizeAndMtime(db, 999, MTIME)).toHaveLength(0);
+		expect(findFilesBySizeAndMtime(db, 1000, '2024-01-01T00:00:00.000Z')).toHaveLength(0);
+	});
+
+	it('never matches rows with a NULL mtime', () => {
+		insertFile({ current_path: '/music/a.flac', file_mtime: null, file_size: 1000 });
+
+		expect(findFilesBySizeAndMtime(db, 1000, MTIME)).toHaveLength(0);
+	});
+});
+
+describe('updateFilePath', () => {
+	it('moves the row to the new path, preserving every other column', () => {
+		insertFile({
+			acknowledged_at: '2025-02-02T00:00:00.000Z',
+			current_path: '/music/old.flac',
+			error_output: 'FRAME_CRC_MISMATCH',
+			file_mtime: '2025-01-01T00:00:00.000Z',
+			file_size: 1000,
+			last_result: 'corrupt',
+			last_verified_at: '2025-01-05T00:00:00.000Z',
+		});
+
+		updateFilePath(db, '/music/old.flac', '/music/new.flac');
+
+		expect(findFileByPath(db, '/music/old.flac')).toBeUndefined();
+		const moved = findFileByPath(db, '/music/new.flac')!;
+		expect(moved.last_result).toBe('corrupt');
+		expect(moved.acknowledged_at).toBe('2025-02-02T00:00:00.000Z');
+		expect(moved.error_output).toBe('FRAME_CRC_MISMATCH');
+		expect(moved.last_verified_at).toBe('2025-01-05T00:00:00.000Z');
+		expect(moved.file_size).toBe(1000);
 	});
 });
 

@@ -85,7 +85,7 @@ export const scanCommand = defineCommand({
 				);
 
 				// Discovery phase
-				await runDiscovery(db, files, config);
+				await runDiscovery(db, files, config, mountCheck.available);
 
 				if (isShuttingDown()) {
 					return;

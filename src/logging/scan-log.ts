@@ -11,6 +11,15 @@ export function logCorruption(logPath: string, filePath: string, details: string
 	});
 }
 
+export function logFileMoved(logPath: string, fromPath: string, toPath: string) {
+	appendEntry(logPath, {
+		event: 'moved',
+		from: fromPath,
+		level: 'info',
+		path: toPath,
+	});
+}
+
 export function logFixApplied(logPath: string, filePath: string, label: string) {
 	appendEntry(logPath, {
 		details: `Stripped ${label} tags`,

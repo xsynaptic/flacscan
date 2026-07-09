@@ -57,6 +57,17 @@ export function findFileByPath(
 		FileRow | undefined;
 }
 
+export function findFilesBySizeAndMtime(
+	database: Database.Database,
+	fileSize: number,
+	fileMtime: string,
+): FileRow[] {
+	return prepareCached(database, `SELECT * FROM files WHERE file_size = ? AND file_mtime = ?`).all(
+		fileSize,
+		fileMtime,
+	) as FileRow[];
+}
+
 export function findUnreadableByPath(
 	database: Database.Database,
 	currentPath: string,
@@ -206,6 +217,14 @@ export function recordRecoveryOutcome(
     WHERE current_path = ?
   `,
 	).run(now, outcome.result, outcome.lostSamples, outcome.detail, now, currentPath);
+}
+
+export function updateFilePath(database: Database.Database, oldPath: string, newPath: string) {
+	const now = new Date().toISOString();
+	prepareCached(
+		database,
+		`UPDATE files SET current_path = ?, updated_at = ? WHERE current_path = ?`,
+	).run(newPath, now, oldPath);
 }
 
 export function updateMetadata(
