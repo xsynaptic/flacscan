@@ -8,7 +8,7 @@ To make effective use of this tool you'll want to scan your entire collection, r
 
 ## Prerequisites
 
-- Node.js 22+
+- Node.js 24+
 - `flac` on PATH (`brew install flac`)
 - `id3v2` on PATH if using `--fix` (`brew install id3v2`)
 

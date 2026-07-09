@@ -1,5 +1,12 @@
 # flacscan
 
+## 4.1.0
+
+### Minor Changes
+
+- Moved or renamed files keep their verification state and acknowledgement when the move is unambiguous, instead of re-alarming as new corruption
+- Opt-in `--notify` (or `notify: true` config) sends a macOS notification when a scan finds new corruption; readme gains a launchd/cron scheduling guide
+
 ## 4.0.0
 
 ### Major Changes
