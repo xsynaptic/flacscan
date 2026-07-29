@@ -21,7 +21,7 @@ export async function processPool<T>(
 ) {
 	const queue = [...items];
 	const workers = Array.from({ length: concurrency }, async () => {
-		while (queue.length > 0 && !shuttingDown) {
+		while (!shuttingDown && queue.length > 0) {
 			const item = queue.shift();
 			if (item !== undefined) {
 				await function_(item);

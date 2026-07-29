@@ -1,5 +1,11 @@
 # flacscan
 
+## 4.1.1
+
+### Patch Changes
+
+- Update runtime dependencies: better-sqlite3 13 (now built on N-API, with prebuilt binaries shipped in the package) and chalk 6
+
 ## 4.1.0
 
 ### Minor Changes

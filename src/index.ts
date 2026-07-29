@@ -9,10 +9,10 @@ const firstArg = rawArgs[0];
 function resolveArgs(): string[] {
 	if (firstArg === undefined || firstArg === 'help') return [];
 	if (
-		firstArg.startsWith('-') &&
 		firstArg !== '-h' &&
 		firstArg !== '--help' &&
-		firstArg !== '--version'
+		firstArg !== '--version' &&
+		firstArg.startsWith('-')
 	) {
 		return ['scan', ...rawArgs];
 	}
