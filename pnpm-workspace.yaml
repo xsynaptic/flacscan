@@ -1,5 +1,5 @@
 # Intended to mitigate supply chain attacks
-minimumReleaseAge: 1440
+minimumReleaseAge: 2880
 verifyDepsBeforeRun: error
 strictDepBuilds: true
 
