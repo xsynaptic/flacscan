@@ -56,7 +56,7 @@ const legacyCeilings: Record<string, Ceilings> = {
 	'src/logging/scan-log.ts': { 'max-params': 4 },
 	'src/metadata.ts': { complexity: 9 },
 	'src/verifiers/flac/verify.ts': { complexity: 11 },
-	'tests/database/queries.test.ts': { complexity: 11 },
+	'verify/unit/database/queries.test.ts': { complexity: 11 },
 };
 
 function ceilingRules(ceilings: Ceilings) {
