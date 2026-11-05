@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { checkMountedPaths, discoverFiles } from '../src/discovery.js';
+import { checkMountedPaths, discoverFiles } from '#discovery.ts';
 
 const EXTENSIONS = ['.flac'];
 

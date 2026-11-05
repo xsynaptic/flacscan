@@ -3,7 +3,7 @@ import type Database from 'better-sqlite3';
 import BetterSqlite3 from 'better-sqlite3';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import type { FileStatus } from '../../src/database/types.js';
+import type { FileStatus } from '#database/types.ts';
 
 import {
 	acknowledgeAllIssues,
@@ -24,8 +24,8 @@ import {
 	updateVerificationResult,
 	upsertFile,
 	upsertUnreadableFile,
-} from '../../src/database/queries.js';
-import { initializeSchema } from '../../src/database/schema.js';
+} from '#database/queries.ts';
+import { initializeSchema } from '#database/schema.ts';
 
 let db: Database.Database;
 
@@ -251,11 +251,11 @@ describe('schema migration', () => {
 
 		initializeSchema(legacy);
 
-		const fileCols = (legacy.pragma('table_info(files)') as Array<{ name: string }>).map(
+		const fileCols = (legacy.pragma('table_info(files)') as { name: string }[]).map(
 			(col) => col.name,
 		);
 		const unreadableCols = (
-			legacy.pragma('table_info(unreadable_files)') as Array<{ name: string }>
+			legacy.pragma('table_info(unreadable_files)') as { name: string }[]
 		).map((col) => col.name);
 		expect(fileCols).toContain('acknowledged_at');
 		expect(unreadableCols).toContain('acknowledged_at');

@@ -3,12 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import {
-	logCorruption,
-	logFileMoved,
-	logScanComplete,
-	logScanStart,
-} from '../../src/logging/scan-log.js';
+import { logCorruption, logFileMoved, logScanComplete, logScanStart } from '#logging/scan-log.ts';
 
 let tempDir: string;
 

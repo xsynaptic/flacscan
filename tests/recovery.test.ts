@@ -5,7 +5,7 @@ import {
 	findSpaceViolations,
 	originalNameForRecoveredFile,
 	recoveredFilePath,
-} from '../src/recovery.js';
+} from '#recovery.ts';
 
 const base = {
 	claimedSamples: 1_000_000,

@@ -3,17 +3,13 @@ import type Database from 'better-sqlite3';
 import BetterSqlite3 from 'better-sqlite3';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { RecoverItem } from '../../src/cli/recover-attempt.js';
-import type { FlacFormat, RecoveryEnv } from '../../src/cli/recover-engine.js';
+import type { RecoverItem } from '#cli/recover-attempt.ts';
+import type { FlacFormat, RecoveryEnv } from '#cli/recover-engine.ts';
 
-import { attemptRecovery } from '../../src/cli/recover-attempt.js';
-import { DEFAULT_CONFIG } from '../../src/config/types.js';
-import {
-	findFileByPath,
-	updateVerificationResult,
-	upsertFile,
-} from '../../src/database/queries.js';
-import { initializeSchema } from '../../src/database/schema.js';
+import { attemptRecovery } from '#cli/recover-attempt.ts';
+import { DEFAULT_CONFIG } from '#config/types.ts';
+import { findFileByPath, updateVerificationResult, upsertFile } from '#database/queries.ts';
+import { initializeSchema } from '#database/schema.ts';
 
 let db: Database.Database;
 

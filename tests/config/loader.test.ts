@@ -3,8 +3,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { loadConfig } from '../../src/config/loader.js';
-import { DEFAULT_CONFIG } from '../../src/config/types.js';
+import { loadConfig } from '#config/loader.ts';
+import { DEFAULT_CONFIG } from '#config/types.ts';
 
 let tempDir: string;
 

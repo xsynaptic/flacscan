@@ -18,7 +18,7 @@ function deferred<T>() {
 }
 
 async function freshPool() {
-	return await import('../../src/cli/process-pool.js');
+	return await import('#cli/process-pool.ts');
 }
 
 describe('processPool', () => {

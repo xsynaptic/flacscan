@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { osaStringLiteral, sendNotification } from '../src/notify.js';
-import { execFile } from '../src/shell.js';
+import { osaStringLiteral, sendNotification } from '#notify.ts';
+import { execFile } from '#shell.ts';
 
-vi.mock('../src/shell.js', () => ({
+vi.mock('#shell.ts', () => ({
 	execFile: vi.fn(() => Promise.resolve({ stderr: '', stdout: '' })),
 }));
 

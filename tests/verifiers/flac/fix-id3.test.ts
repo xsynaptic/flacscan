@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { hasId3Tags } from '../../../src/verifiers/flac/fix-id3.js';
+import { hasId3Tags } from '#verifiers/flac/fix-id3.ts';
 
 describe('hasId3Tags', () => {
 	it('returns true for ID3v2 tag found', () => {

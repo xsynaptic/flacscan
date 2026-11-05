@@ -6,20 +6,20 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { FileRow } from '../../src/database/types.js';
-import type { FormatVerifier, VerificationResult } from '../../src/verifiers/types.js';
+import type { FileRow } from '#database/types.ts';
+import type { FormatVerifier, VerificationResult } from '#verifiers/types.ts';
 
-import { isShuttingDown } from '../../src/cli/process-pool.js';
-import { verifyAndRecord } from '../../src/cli/verify-and-record.js';
-import { findFileByPath, upsertFile } from '../../src/database/queries.js';
-import { initializeSchema } from '../../src/database/schema.js';
-import { extractMetadata } from '../../src/metadata.js';
+import { isShuttingDown } from '#cli/process-pool.ts';
+import { verifyAndRecord } from '#cli/verify-and-record.ts';
+import { findFileByPath, upsertFile } from '#database/queries.ts';
+import { initializeSchema } from '#database/schema.ts';
+import { extractMetadata } from '#metadata.ts';
 
-vi.mock('../../src/cli/process-pool.js', () => ({
+vi.mock('#cli/process-pool.ts', () => ({
 	isShuttingDown: vi.fn(() => false),
 }));
 
-vi.mock('../../src/metadata.js', () => ({
+vi.mock('#metadata.ts', () => ({
 	extractMetadata: vi.fn(() =>
 		Promise.resolve({ album: 'A', artist: 'B', date: '2020', duration: 1, title: 'T' }),
 	),

@@ -1,8 +1,8 @@
 import path from 'node:path';
 
-import type { FlacScanConfig } from '../src/config/types.js';
+import type { FlacScanConfig } from '#config/types.ts';
 
-import { DEFAULT_CONFIG } from '../src/config/types.js';
+import { DEFAULT_CONFIG } from '#config/types.ts';
 
 export function makeTestConfig(
 	tempDir: string,

@@ -1,12 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('../../../src/shell.js', async (importActual) => {
-	const actual = await importActual<typeof import('../../../src/shell.js')>();
+vi.mock('#shell.ts', async (importActual) => {
+	const actual = await importActual<typeof import('#shell.ts')>();
 	return { ...actual, execFile: vi.fn() };
 });
 
-import { execFile } from '../../../src/shell.js';
-import { extractErrorTimestamp, flacVerifier } from '../../../src/verifiers/flac/verify.js';
+import { execFile } from '#shell.ts';
+import { extractErrorTimestamp, flacVerifier } from '#verifiers/flac/verify.ts';
 
 const mockExecFile = vi.mocked(execFile);
 

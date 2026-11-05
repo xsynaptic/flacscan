@@ -6,12 +6,13 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { FormatVerifier } from '../../src/verifiers/types.js';
+import type { FormatVerifier } from '#verifiers/types.ts';
 
-import { runVerification } from '../../src/cli/scan-verify.js';
-import { findFileByPath, upsertFile } from '../../src/database/queries.js';
-import { initializeSchema } from '../../src/database/schema.js';
-import { makeTestConfig } from '../helpers.js';
+import { runVerification } from '#cli/scan-verify.ts';
+import { findFileByPath, upsertFile } from '#database/queries.ts';
+import { initializeSchema } from '#database/schema.ts';
+
+import { makeTestConfig } from '../helpers.ts';
 
 let db: Database.Database;
 let tempDir: string;

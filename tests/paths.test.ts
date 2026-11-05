@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { directoryPrefix } from '../src/paths.js';
+import { directoryPrefix } from '#paths.ts';
 
 describe('directoryPrefix', () => {
 	it('appends a separator to a bare directory', () => {

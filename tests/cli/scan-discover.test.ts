@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { runDiscovery } from '../../src/cli/scan-discover.js';
+import { runDiscovery } from '#cli/scan-discover.ts';
 import {
 	acknowledgeAllIssues,
 	findFileByPath,
@@ -15,9 +15,10 @@ import {
 	updateVerificationResult,
 	upsertFile,
 	upsertUnreadableFile,
-} from '../../src/database/queries.js';
-import { initializeSchema } from '../../src/database/schema.js';
-import { makeTestConfig } from '../helpers.js';
+} from '#database/queries.ts';
+import { initializeSchema } from '#database/schema.ts';
+
+import { makeTestConfig } from '../helpers.ts';
 
 let db: Database.Database;
 let tempDir: string;

@@ -6,15 +6,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { runRecovery } from '../../src/cli/recover.js';
-import {
-	getRecoveryCandidates,
-	updateVerificationResult,
-	upsertFile,
-} from '../../src/database/queries.js';
-import { initializeSchema } from '../../src/database/schema.js';
-import { FlacScanError } from '../../src/errors.js';
-import { makeTestConfig } from '../helpers.js';
+import { runRecovery } from '#cli/recover.ts';
+import { getRecoveryCandidates, updateVerificationResult, upsertFile } from '#database/queries.ts';
+import { initializeSchema } from '#database/schema.ts';
+import { FlacScanError } from '#errors.ts';
+
+import { makeTestConfig } from '../helpers.ts';
 
 let db: Database.Database;
 let tempDir: string;
