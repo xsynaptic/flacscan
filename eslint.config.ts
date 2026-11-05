@@ -37,7 +37,10 @@ export default defineConfig([
 			'unicorn/no-null': 'off',
 			'unicorn/no-process-exit': 'off',
 			'unicorn/no-top-level-assignment-in-function': 'off', // Flags the legitimate lazy-singleton (instance ??= load()) cache pattern
+			'unicorn/prefer-combined-guards': 'off', // Each guard names a distinct reason to bail; merging them hides which one fired
 			'unicorn/prefer-iterator-to-array': 'off', // Pushes Iterator#toArray(), which needs the esnext.iterator lib
+			'unicorn/prefer-smaller-scope': 'off', // Wants module-level types moved inside functions
+			'unicorn/prefer-ternary': 'off', // Plain if/else and guard clauses are the house style
 			'unicorn/prevent-abbreviations': 'off',
 			'unicorn/single-line-block-comment-style': 'off', // Rewrites single-line /* */ comments into a three-line block, churning existing code for no gain
 		},

@@ -40,10 +40,9 @@ describe('flacVerifier.verify', () => {
 		);
 		const result = await flacVerifier.verify('/music/bad.flac');
 		expect(result.status).toBe('corrupt');
-		if (result.status === 'corrupt') {
-			expect(result.errorOutput).toContain('after processing 42 samples');
-			expect(result.errorTimestamp).toBe('sample 42');
-		}
+		if (result.status !== 'corrupt') return;
+		expect(result.errorOutput).toContain('after processing 42 samples');
+		expect(result.errorTimestamp).toBe('sample 42');
 	});
 
 	it('records a corrupt verdict naming the signal when the decoder crashes', async () => {
@@ -52,10 +51,9 @@ describe('flacVerifier.verify', () => {
 		);
 		const result = await flacVerifier.verify('/music/crash.flac');
 		expect(result.status).toBe('corrupt');
-		if (result.status === 'corrupt') {
-			expect(result.errorOutput).toContain('SIGSEGV');
-			expect(result.errorTimestamp).toBeNull();
-		}
+		if (result.status !== 'corrupt') return;
+		expect(result.errorOutput).toContain('SIGSEGV');
+		expect(result.errorTimestamp).toBeNull();
 	});
 
 	it('treats a SIGINT as an interruption, not corruption', async () => {

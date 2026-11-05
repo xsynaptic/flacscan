@@ -30,17 +30,17 @@ const SRC = '/music/song.flac';
 const DEST = '/music/song [Recovered].flac';
 const PARTIAL = `${DEST}.partial`;
 
-const fmt = (totalSamples: number, sampleRate = 44_100): FlacFormat => ({
+const fmt = (totalSamples: number): FlacFormat => ({
 	bitsPerSample: 16,
 	channels: 2,
-	sampleRate,
+	sampleRate: 44_100,
 	totalSamples,
 });
 
 const probeBy =
-	(srcTotal: number, partialTotal: number, sampleRate = 44_100) =>
+	(srcTotal: number, partialTotal: number) =>
 	(p: string): Promise<FlacFormat> =>
-		Promise.resolve(fmt(p.endsWith('.partial') ? partialTotal : srcTotal, sampleRate));
+		Promise.resolve(fmt(p.endsWith('.partial') ? partialTotal : srcTotal));
 
 function makeEnv(overrides: Partial<RecoveryEnv>): RecoveryEnv {
 	return {
@@ -57,21 +57,21 @@ function makeEnv(overrides: Partial<RecoveryEnv>): RecoveryEnv {
 	};
 }
 
-function seed(src = SRC): RecoverItem {
-	upsertFile(db, { current_path: src, file_mtime: null, file_size: null });
-	updateVerificationResult(db, src, { last_result: 'corrupt' });
+function seed(): RecoverItem {
+	upsertFile(db, { current_path: SRC, file_mtime: null, file_size: null });
+	updateVerificationResult(db, SRC, { last_result: 'corrupt' });
 	return {
 		atimeMs: 1000,
 		dest: DEST,
 		dev: 1,
 		mtimeMs: 2000,
-		row: findFileByPath(db, src)!,
+		row: findFileByPath(db, SRC)!,
 		size: 100,
-		src,
+		src: SRC,
 	};
 }
 
-const recoveryResult = (src = SRC) => findFileByPath(db, src)!.recovery_result;
+const recoveryResult = () => findFileByPath(db, SRC)!.recovery_result;
 
 describe('attemptRecovery', () => {
 	it('does not start or record a verdict when shutting down', async () => {

@@ -105,11 +105,7 @@ export function findSpaceViolations(
 	return violations;
 }
 
-/**
- * If `fileName` looks like a recovered file (`Track [Recovered].flac`), the name of the
- * original it was made from (`Track.flac`); otherwise `null`. Used by discovery to skip a
- * recovered file only while its original is still present alongside it.
- */
+// Discovery skips a recovered file only while its original still sits beside it
 export function originalNameForRecoveredFile(fileName: string): null | string {
 	const extension = path.extname(fileName);
 	const base = path.basename(fileName, extension);
@@ -117,10 +113,6 @@ export function originalNameForRecoveredFile(fileName: string): null | string {
 	return base.replace(RECOVERED_BASENAME_RE, '') + extension;
 }
 
-/**
- * Path of the re-encoded copy `recover` writes next to `originalPath`; the suffix goes
- * before the extension so the `.flac` stays last (`Track.flac` → `Track [Recovered].flac`).
- */
 export function recoveredFilePath(originalPath: string): string {
 	const extension = path.extname(originalPath);
 	const base = path.basename(originalPath, extension);
