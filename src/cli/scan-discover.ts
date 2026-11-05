@@ -3,9 +3,10 @@ import type Database from 'better-sqlite3';
 import fs from 'node:fs';
 import ora from 'ora';
 
-import type { FlacScanConfig } from '../config/types.js';
-import type { FileRow } from '../database/types.js';
+import type { FlacScanConfig } from '#config/types.ts';
+import type { FileRow } from '#database/types.ts';
 
+import { isShuttingDown } from '#cli/process-pool.ts';
 import {
 	clearRecoveryOutcome,
 	deleteUnreadableByPath,
@@ -15,10 +16,9 @@ import {
 	updateFilePath,
 	upsertFile,
 	upsertUnreadableFile,
-} from '../database/queries.js';
-import { logFileMoved, logUnreadable } from '../logging/scan-log.js';
-import { directoryPrefix } from '../paths.js';
-import { isShuttingDown } from './process-pool.js';
+} from '#database/queries.ts';
+import { logFileMoved, logUnreadable } from '#logging/scan-log.ts';
+import { directoryPrefix } from '#paths.ts';
 
 // Stat and write in chunked transactions; one autocommit per file is the dominant
 // cost on the initial scan of a large collection

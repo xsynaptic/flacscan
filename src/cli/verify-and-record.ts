@@ -2,12 +2,12 @@ import type Database from 'better-sqlite3';
 
 import fs from 'node:fs';
 
-import type { FileRow } from '../database/types.js';
-import type { FormatVerifier, VerificationResult } from '../verifiers/types.js';
+import type { FileRow } from '#database/types.ts';
+import type { FormatVerifier, VerificationResult } from '#verifiers/types.ts';
 
-import { updateMetadata, updateVerificationResult, upsertFile } from '../database/queries.js';
-import { extractMetadata } from '../metadata.js';
-import { isShuttingDown } from './process-pool.js';
+import { isShuttingDown } from '#cli/process-pool.ts';
+import { updateMetadata, updateVerificationResult, upsertFile } from '#database/queries.ts';
+import { extractMetadata } from '#metadata.ts';
 
 type FixAnnotation =
 	{ error: string; label: string; state: 'failed' } | { label: string; state: 'detected' };

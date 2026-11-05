@@ -6,21 +6,21 @@ import fs from 'node:fs';
 import path from 'node:path';
 import ora from 'ora';
 
-import type { FlacScanConfig } from '../config/types.js';
-import type { FileRow } from '../database/types.js';
-import type { AttemptResult, RecoverItem } from './recover-attempt.js';
+import type { AttemptResult, RecoverItem } from '#cli/recover-attempt.ts';
+import type { FlacScanConfig } from '#config/types.ts';
+import type { FileRow } from '#database/types.ts';
 
-import { countRecoveryAttempted, getRecoveryCandidates } from '../database/queries.js';
-import { checkMountedPaths } from '../discovery.js';
-import { FlacScanError } from '../errors.js';
-import { directoryPrefix } from '../paths.js';
-import { findSpaceViolations, recoveredFilePath } from '../recovery.js';
-import { ensureBinary } from '../shell.js';
-import { installShutdownHandler, isShuttingDown, processPool } from './process-pool.js';
-import { attemptRecovery } from './recover-attempt.js';
-import { flacEngine } from './recover-engine.js';
-import { runCommand } from './run-command.js';
-import { sharedArguments } from './shared-arguments.js';
+import { installShutdownHandler, isShuttingDown, processPool } from '#cli/process-pool.ts';
+import { attemptRecovery } from '#cli/recover-attempt.ts';
+import { flacEngine } from '#cli/recover-engine.ts';
+import { runCommand } from '#cli/run-command.ts';
+import { sharedArguments } from '#cli/shared-arguments.ts';
+import { countRecoveryAttempted, getRecoveryCandidates } from '#database/queries.ts';
+import { checkMountedPaths } from '#discovery.ts';
+import { FlacScanError } from '#errors.ts';
+import { directoryPrefix } from '#paths.ts';
+import { findSpaceViolations, recoveredFilePath } from '#recovery.ts';
+import { ensureBinary } from '#shell.ts';
 
 interface ReportEntry {
 	claimedSamples: number;

@@ -48,7 +48,7 @@ export function initializeSchema(database: Database.Database) {
 }
 
 function applyMigrations(database: Database.Database) {
-	const columns = database.pragma('table_info(files)') as Array<{ name: string }>;
+	const columns = database.pragma('table_info(files)') as { name: string }[];
 	const existing = new Set(columns.map((c) => c.name));
 	for (const col of [
 		'artist',
@@ -71,9 +71,9 @@ function applyMigrations(database: Database.Database) {
 		database.exec(`ALTER TABLE files ADD COLUMN recovery_lost_samples INTEGER`);
 	}
 
-	const unreadableColumns = database.pragma('table_info(unreadable_files)') as Array<{
+	const unreadableColumns = database.pragma('table_info(unreadable_files)') as {
 		name: string;
-	}>;
+	}[];
 	const existingUnreadable = new Set(unreadableColumns.map((col) => col.name));
 	if (!existingUnreadable.has('acknowledged_at')) {
 		database.exec(`ALTER TABLE unreadable_files ADD COLUMN acknowledged_at TEXT`);

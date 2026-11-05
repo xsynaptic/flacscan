@@ -3,11 +3,11 @@ import { defineCommand } from 'citty';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import type { FileRow, UnreadableFileRow } from '../database/types.js';
+import type { FileRow, UnreadableFileRow } from '#database/types.ts';
 
-import { getAllUnreadableFiles, getCorruptFiles } from '../database/queries.js';
-import { runCommand } from './run-command.js';
-import { sharedArguments } from './shared-arguments.js';
+import { runCommand } from '#cli/run-command.ts';
+import { sharedArguments } from '#cli/shared-arguments.ts';
+import { getAllUnreadableFiles, getCorruptFiles } from '#database/queries.ts';
 
 function formatReport(useColor: boolean) {
 	const c = {

@@ -1,8 +1,8 @@
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 
-import { execFile } from '../shell.js';
-import { isShuttingDown } from './process-pool.js';
+import { isShuttingDown } from '#cli/process-pool.ts';
+import { execFile } from '#shell.ts';
 
 export interface FlacFormat {
 	bitsPerSample: number;

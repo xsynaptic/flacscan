@@ -1,9 +1,9 @@
 import type Database from 'better-sqlite3';
 
-import type { FlacMetadata } from '../metadata.js';
-import type { FileRow, FileStatus, RecoveryResult, UnreadableFileRow } from './types.js';
+import type { FileRow, FileStatus, RecoveryResult, UnreadableFileRow } from '#database/types.ts';
+import type { FlacMetadata } from '#metadata.ts';
 
-import { directoryPrefix } from '../paths.js';
+import { directoryPrefix } from '#paths.ts';
 
 // Prepared statements are cached per database handle; re-preparing on every call
 // dominates discovery cost on large collections
@@ -177,11 +177,11 @@ export function getStats(database: Database.Database) {
 	).all() as { count: number; recovery_result: null | RecoveryResult }[];
 
 	return {
-		corrupt: countsByResult['corrupt'] ?? 0,
-		healthy: countsByResult['healthy'] ?? 0,
+		corrupt: countsByResult.corrupt ?? 0,
+		healthy: countsByResult.healthy ?? 0,
 		newCorrupt,
 		newUnreadable,
-		pending: countsByResult['pending'] ?? 0,
+		pending: countsByResult.pending ?? 0,
 		recoveryBreakdown,
 		total,
 		unreadable,

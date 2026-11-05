@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { originalNameForRecoveredFile } from './recovery.js';
+import { originalNameForRecoveredFile } from '#recovery.ts';
 
 interface MountCheckResult {
 	available: string[];

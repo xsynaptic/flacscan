@@ -1,8 +1,8 @@
 import { defineCommand } from 'citty';
 
-import { acknowledgeAllIssues } from '../database/queries.js';
-import { runCommand } from './run-command.js';
-import { sharedArguments } from './shared-arguments.js';
+import { runCommand } from '#cli/run-command.ts';
+import { sharedArguments } from '#cli/shared-arguments.ts';
+import { acknowledgeAllIssues } from '#database/queries.ts';
 
 export const acceptCommand = defineCommand({
 	args: {

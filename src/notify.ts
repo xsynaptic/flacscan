@@ -1,4 +1,4 @@
-import { execFile } from './shell.js';
+import { execFile } from '#shell.ts';
 
 // AppleScript string literal: backslashes and double quotes are the only escapes needed
 export function osaStringLiteral(value: string): string {

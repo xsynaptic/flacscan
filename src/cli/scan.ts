@@ -1,16 +1,16 @@
 import { defineCommand } from 'citty';
 import ora from 'ora';
 
-import { discoverFiles } from '../discovery.js';
-import { logScanComplete, logScanStart } from '../logging/scan-log.js';
-import { sendNotification } from '../notify.js';
-import { ensureBinary } from '../shell.js';
-import { flacVerifier } from '../verifiers/flac/verify.js';
-import { installShutdownHandler, isShuttingDown } from './process-pool.js';
-import { runCommand } from './run-command.js';
-import { runDiscovery } from './scan-discover.js';
-import { runVerification } from './scan-verify.js';
-import { sharedArguments } from './shared-arguments.js';
+import { installShutdownHandler, isShuttingDown } from '#cli/process-pool.ts';
+import { runCommand } from '#cli/run-command.ts';
+import { runDiscovery } from '#cli/scan-discover.ts';
+import { runVerification } from '#cli/scan-verify.ts';
+import { sharedArguments } from '#cli/shared-arguments.ts';
+import { discoverFiles } from '#discovery.ts';
+import { logScanComplete, logScanStart } from '#logging/scan-log.ts';
+import { sendNotification } from '#notify.ts';
+import { ensureBinary } from '#shell.ts';
+import { flacVerifier } from '#verifiers/flac/verify.ts';
 
 export const scanCommand = defineCommand({
 	args: {

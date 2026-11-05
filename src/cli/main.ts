@@ -1,13 +1,14 @@
 import { defineCommand } from 'citty';
 
+import { acceptCommand } from '#cli/accept.ts';
+import { listCommand } from '#cli/list.ts';
+import { recheckCommand } from '#cli/recheck.ts';
+import { recoverCommand } from '#cli/recover.ts';
+import { reportCommand } from '#cli/report.ts';
+import { scanCommand } from '#cli/scan.ts';
+import { statusCommand } from '#cli/status.ts';
+
 import packageJson from '../../package.json' with { type: 'json' };
-import { acceptCommand } from './accept.js';
-import { listCommand } from './list.js';
-import { recheckCommand } from './recheck.js';
-import { recoverCommand } from './recover.js';
-import { reportCommand } from './report.js';
-import { scanCommand } from './scan.js';
-import { statusCommand } from './status.js';
 
 export const main = defineCommand({
 	meta: {

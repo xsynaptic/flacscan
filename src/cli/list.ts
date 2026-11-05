@@ -1,16 +1,16 @@
 import { defineCommand } from 'citty';
 import path from 'node:path';
 
-import type { FileRow, UnreadableFileRow } from '../database/types.js';
+import type { FileRow, UnreadableFileRow } from '#database/types.ts';
 
+import { runCommand } from '#cli/run-command.ts';
+import { sharedArguments } from '#cli/shared-arguments.ts';
 import {
 	getAllUnreadableFiles,
 	getCorruptFiles,
 	getCorruptFilesByAcknowledged,
 	getUnreadableFilesByAcknowledged,
-} from '../database/queries.js';
-import { runCommand } from './run-command.js';
-import { sharedArguments } from './shared-arguments.js';
+} from '#database/queries.ts';
 
 interface CorruptJsonEntry {
 	acknowledged_at: null | string;
@@ -122,61 +122,40 @@ export const listCommand = defineCommand({
 
 		await runCommand(args, {}, (db) => {
 			if (filter === 'unreadable') {
-				const files = getAllUnreadableFiles(db);
-				if (jsonOutput) {
-					process.stdout.write(
-						JSON.stringify(
-							files.map((f) => toUnreadableJson(f)),
-							null,
-							2,
-						) + '\n',
-					);
-				} else {
-					for (const file of files) process.stdout.write(file.current_path + '\n');
-				}
+				// Keeps the query's byte order; the merged filters below sort with localeCompare
+				writeEntries(
+					getAllUnreadableFiles(db).map((file) => toUnreadableJson(file)),
+					jsonOutput,
+				);
 				return;
 			}
-
 			if (filter === 'new' || filter === 'accepted') {
 				const accepted = filter === 'accepted';
-				const corrupt = getCorruptFilesByAcknowledged(db, accepted);
-				const unreadable = getUnreadableFilesByAcknowledged(db, accepted);
-				if (jsonOutput) {
-					const results: Array<CorruptJsonEntry | UnreadableJsonEntry> = [
-						...corrupt.map((file) => toCorruptJson(file)),
-						...unreadable.map((file) => toUnreadableJson(file)),
-					];
-					results.sort((a, b) => a.original_path.localeCompare(b.original_path));
-					process.stdout.write(JSON.stringify(results, null, 2) + '\n');
-				} else {
-					const paths = [
-						...corrupt.map((file) => file.current_path),
-						...unreadable.map((file) => file.current_path),
-					];
-					paths.sort((a, b) => a.localeCompare(b));
-					for (const filePath of paths) process.stdout.write(filePath + '\n');
-				}
+				writeIssues(
+					getCorruptFilesByAcknowledged(db, accepted),
+					getUnreadableFilesByAcknowledged(db, accepted),
+					jsonOutput,
+				);
 				return;
 			}
-
-			const corrupt = getCorruptFiles(db);
-			const unreadable = getAllUnreadableFiles(db);
-
-			if (jsonOutput) {
-				const results: Array<CorruptJsonEntry | UnreadableJsonEntry> = [
-					...corrupt.map((f) => toCorruptJson(f)),
-					...unreadable.map((f) => toUnreadableJson(f)),
-				];
-				results.sort((a, b) => a.original_path.localeCompare(b.original_path));
-				process.stdout.write(JSON.stringify(results, null, 2) + '\n');
-			} else {
-				const paths = [
-					...corrupt.map((f) => f.current_path),
-					...unreadable.map((f) => f.current_path),
-				];
-				paths.sort((a, b) => a.localeCompare(b));
-				for (const filePath of paths) process.stdout.write(filePath + '\n');
-			}
+			writeIssues(getCorruptFiles(db), getAllUnreadableFiles(db), jsonOutput);
 		});
 	},
 });
+
+function writeIssues(corrupt: FileRow[], unreadable: UnreadableFileRow[], jsonOutput: boolean) {
+	const entries: (CorruptJsonEntry | UnreadableJsonEntry)[] = [
+		...corrupt.map((file) => toCorruptJson(file)),
+		...unreadable.map((file) => toUnreadableJson(file)),
+	];
+	entries.sort((a, b) => a.original_path.localeCompare(b.original_path));
+	writeEntries(entries, jsonOutput);
+}
+
+function writeEntries(entries: (CorruptJsonEntry | UnreadableJsonEntry)[], jsonOutput: boolean) {
+	if (jsonOutput) {
+		process.stdout.write(JSON.stringify(entries, null, 2) + '\n');
+		return;
+	}
+	for (const entry of entries) process.stdout.write(entry.original_path + '\n');
+}

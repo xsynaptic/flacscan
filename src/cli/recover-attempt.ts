@@ -2,12 +2,12 @@ import type Database from 'better-sqlite3';
 
 import path from 'node:path';
 
-import type { FlacScanConfig } from '../config/types.js';
-import type { FileRow } from '../database/types.js';
-import type { FlacFormat, RecoveryEnv } from './recover-engine.js';
+import type { FlacFormat, RecoveryEnv } from '#cli/recover-engine.ts';
+import type { FlacScanConfig } from '#config/types.ts';
+import type { FileRow } from '#database/types.ts';
 
-import { recordRecoveryOutcome } from '../database/queries.js';
-import { classifyRecovery } from '../recovery.js';
+import { recordRecoveryOutcome } from '#database/queries.ts';
+import { classifyRecovery } from '#recovery.ts';
 
 export interface AttemptResult {
 	claimedSamples: number;

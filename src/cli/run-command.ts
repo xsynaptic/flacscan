@@ -1,8 +1,8 @@
-import type { FlacScanConfig } from '../config/types.js';
+import type { FlacScanConfig } from '#config/types.ts';
 
-import { loadConfig } from '../config/loader.js';
-import { openDatabase } from '../database/connection.js';
-import { FlacScanError } from '../errors.js';
+import { loadConfig } from '#config/loader.ts';
+import { openDatabase } from '#database/connection.ts';
+import { FlacScanError } from '#errors.ts';
 
 type Database = ReturnType<typeof openDatabase>;
 

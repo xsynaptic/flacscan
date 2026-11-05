@@ -1,10 +1,10 @@
 import chalk from 'chalk';
 import { defineCommand } from 'citty';
 
-import { getStats } from '../database/queries.js';
-import { checkMountedPaths } from '../discovery.js';
-import { runCommand } from './run-command.js';
-import { sharedArguments } from './shared-arguments.js';
+import { runCommand } from '#cli/run-command.ts';
+import { sharedArguments } from '#cli/shared-arguments.ts';
+import { getStats } from '#database/queries.ts';
+import { checkMountedPaths } from '#discovery.ts';
 
 const plain = (value: string) => value;
 
@@ -45,12 +45,9 @@ export const statusCommand = defineCommand({
 				console.log(chalk.bold('\n  Recovery:'));
 				for (const row of stats.recoveryBreakdown) {
 					const label = row.recovery_result ?? 'not yet attempted';
-					const color =
-						row.recovery_result === 'recovered'
-							? chalk.green
-							: row.recovery_result === 'unsuitable'
-								? chalk.yellow
-								: chalk.dim;
+					let color = chalk.dim;
+					if (row.recovery_result === 'recovered') color = chalk.green;
+					else if (row.recovery_result === 'unsuitable') color = chalk.yellow;
 					console.log(`    ${color(label)}: ${String(row.count)}`);
 				}
 			}

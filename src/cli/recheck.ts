@@ -5,8 +5,13 @@ import { defineCommand } from 'citty';
 import fs from 'node:fs';
 import ora from 'ora';
 
-import type { FileRow, UnreadableFileRow } from '../database/types.js';
+import type { FileRow, UnreadableFileRow } from '#database/types.ts';
 
+import { printCorruptFile } from '#cli/format-corrupt.ts';
+import { installShutdownHandler, isShuttingDown, processPool } from '#cli/process-pool.ts';
+import { runCommand } from '#cli/run-command.ts';
+import { sharedArguments } from '#cli/shared-arguments.ts';
+import { verifyAndRecord } from '#cli/verify-and-record.ts';
 import {
 	deleteFileByPath,
 	deleteUnreadableByPath,
@@ -15,16 +20,11 @@ import {
 	getCorruptFiles,
 	upsertFile,
 	upsertUnreadableFile,
-} from '../database/queries.js';
-import { checkMountedPaths } from '../discovery.js';
-import { directoryPrefix } from '../paths.js';
-import { ensureBinary } from '../shell.js';
-import { flacVerifier } from '../verifiers/flac/verify.js';
-import { printCorruptFile } from './format-corrupt.js';
-import { installShutdownHandler, isShuttingDown, processPool } from './process-pool.js';
-import { runCommand } from './run-command.js';
-import { sharedArguments } from './shared-arguments.js';
-import { verifyAndRecord } from './verify-and-record.js';
+} from '#database/queries.ts';
+import { checkMountedPaths } from '#discovery.ts';
+import { directoryPrefix } from '#paths.ts';
+import { ensureBinary } from '#shell.ts';
+import { flacVerifier } from '#verifiers/flac/verify.ts';
 
 type RecheckItem =
 	{ row: FileRow; source: 'files' } | { row: UnreadableFileRow; source: 'unreadable' };

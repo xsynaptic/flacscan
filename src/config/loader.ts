@@ -3,10 +3,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { parse as parseYaml } from 'yaml';
 
-import type { FlacScanConfig } from './types.js';
+import type { FlacScanConfig } from '#config/types.ts';
 
-import { FlacScanError } from '../errors.js';
-import { DEFAULT_CONFIG } from './types.js';
+import { DEFAULT_CONFIG } from '#config/types.ts';
+import { FlacScanError } from '#errors.ts';
 
 interface CliArgs {
 	'batch-size'?: string | undefined;

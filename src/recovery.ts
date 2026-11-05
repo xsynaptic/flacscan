@@ -71,8 +71,6 @@ export function classifyRecovery(input: {
 }
 
 const RECOVERED_SUFFIX = ' [Recovered]';
-// Matches the trailing " [Recovered]" on a file's basename (extension already removed).
-const RECOVERED_BASENAME_RE = / \[Recovered\]$/;
 
 /** Per volume, flag any that can't hold its pending recovered files while keeping `minFreeBytes` free; empty array means all fit. Pure. */
 export function findSpaceViolations(
@@ -109,8 +107,8 @@ export function findSpaceViolations(
 export function originalNameForRecoveredFile(fileName: string): null | string {
 	const extension = path.extname(fileName);
 	const base = path.basename(fileName, extension);
-	if (!RECOVERED_BASENAME_RE.test(base)) return null;
-	return base.replace(RECOVERED_BASENAME_RE, '') + extension;
+	if (!base.endsWith(RECOVERED_SUFFIX)) return null;
+	return base.slice(0, -RECOVERED_SUFFIX.length) + extension;
 }
 
 export function recoveredFilePath(originalPath: string): string {

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { runMain } from 'citty';
 
-import { main } from './cli/main.js';
+import { main } from '#cli/main.ts';
 
 const rawArgs = process.argv.slice(2);
 const firstArg = rawArgs[0];

@@ -4,14 +4,14 @@ import chalk from 'chalk';
 import fs from 'node:fs';
 import ora from 'ora';
 
-import type { FlacScanConfig } from '../config/types.js';
-import type { FormatVerifier } from '../verifiers/types.js';
+import type { FlacScanConfig } from '#config/types.ts';
+import type { FormatVerifier } from '#verifiers/types.ts';
 
-import { deleteFileByPath, getFilesNeedingVerification } from '../database/queries.js';
-import { logCorruption, logFixApplied, logFixDetected, logFixFailed } from '../logging/scan-log.js';
-import { printCorruptFile } from './format-corrupt.js';
-import { isShuttingDown, processPool } from './process-pool.js';
-import { verifyAndRecord } from './verify-and-record.js';
+import { printCorruptFile } from '#cli/format-corrupt.ts';
+import { isShuttingDown, processPool } from '#cli/process-pool.ts';
+import { verifyAndRecord } from '#cli/verify-and-record.ts';
+import { deleteFileByPath, getFilesNeedingVerification } from '#database/queries.ts';
+import { logCorruption, logFixApplied, logFixDetected, logFixFailed } from '#logging/scan-log.ts';
 
 interface VerificationStats {
 	corrupt: number;
