@@ -6,3 +6,8 @@ strictDepBuilds: true
 allowBuilds:
   better-sqlite3: true
   esbuild: true
+  lefthook: true
+
+permissions:
+  fallow:
+    skills: false

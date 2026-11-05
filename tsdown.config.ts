@@ -4,4 +4,5 @@ export default defineConfig({
 	clean: true,
 	entry: ['src/index.ts'],
 	format: 'esm',
+	publint: true,
 });

@@ -1,0 +1,143 @@
+{
+	"$schema": "https://raw.githubusercontent.com/fallow-rs/fallow/main/schema.json",
+	// Out of Prettier's walk; the gate's parallel fallow jobs rewrite the cache while `prettier --check .` reads it
+	"cache": { "dir": "node_modules/.cache/fallow" },
+	"rules": {
+		// Dead code and dependency hygiene belong to knip
+		"unused-files": "off",
+		"unused-exports": "off",
+		"unused-types": "off",
+		"unused-enum-members": "off",
+		"unused-class-members": "off",
+		"unused-dependencies": "off",
+		"unused-dev-dependencies": "off",
+		"unused-optional-dependencies": "off",
+		"unlisted-dependencies": "off",
+		"unresolved-imports": "off",
+		"duplicate-exports": "off",
+		"type-only-dependencies": "off",
+		"test-only-dependencies": "off",
+		"dev-dependencies-in-production": "off",
+		"unused-dependency-overrides": "off",
+		"misconfigured-dependency-overrides": "off",
+		// Cycles belong to fallow, and these two default to warn, which never fails the gate
+		"re-export-cycle": "error",
+		"package-cycle": "error",
+		// Reported only by `dead-code --stale-suppressions`, which the suppressions job runs
+		"stale-suppressions": "error",
+		"require-suppression-reason": "error",
+	},
+	"health": {
+		// ESLint has no cognitive-complexity rule, so this is the only ceiling on it
+		"maxCognitive": 10,
+		// Zero disables CRAP, which fallow otherwise estimates from the module graph without coverage data
+		"maxCrap": 0,
+		"thresholdOverrides": [
+			{
+				"files": ["**/*.test.ts"],
+				"maxUnitSize": 195,
+				"reason": "Suites are tables of cases; the longest measured 193 lines on 2026-11-05",
+			},
+			// Per-unit ceilings at measured cognitive + 2, so incidental edits pass and growth fails
+			{
+				"files": ["src/cli/recheck.ts"],
+				"functions": ["<arrow>"],
+				"maxCognitive": 14,
+				"reason": "Measured 12 on 2026-11-05; ratchet down when refactored",
+			},
+			{
+				"files": ["src/cli/recover-attempt.ts"],
+				"functions": ["attemptRecovery"],
+				"maxCognitive": 25,
+				"reason": "Measured 23 on 2026-11-05; ratchet down when refactored",
+			},
+			{
+				"files": ["src/cli/recover.ts"],
+				"functions": ["<arrow>"],
+				"maxCognitive": 15,
+				"reason": "Measured 13 on 2026-11-05; ratchet down when refactored",
+			},
+			{
+				"files": ["src/cli/recover.ts"],
+				"functions": ["runRecovery"],
+				"maxCognitive": 17,
+				"reason": "Measured 15 on 2026-11-05; ratchet down when refactored",
+			},
+			{
+				"files": ["src/cli/report.ts"],
+				"functions": ["writeCorruptSection"],
+				"maxCognitive": 20,
+				"reason": "Measured 18 on 2026-11-05; ratchet down when refactored",
+			},
+			{
+				"files": ["src/cli/scan-discover.ts"],
+				"functions": ["<arrow>"],
+				"maxCognitive": 22,
+				"reason": "Measured 20 on 2026-11-05; ratchet down when refactored",
+			},
+			{
+				"files": ["src/cli/scan.ts"],
+				"functions": ["<arrow>"],
+				"maxCognitive": 14,
+				"reason": "Measured 12 on 2026-11-05; ratchet down when refactored",
+			},
+			{
+				"files": ["src/cli/status.ts"],
+				"functions": ["<arrow>"],
+				"maxCognitive": 16,
+				"reason": "Measured 14 on 2026-11-05; ratchet down when refactored",
+			},
+			{
+				"files": ["src/cli/verify-and-record.ts"],
+				"functions": ["verifyAndRecord"],
+				"maxCognitive": 27,
+				"reason": "Measured 25 on 2026-11-05; ratchet down when refactored",
+			},
+			{
+				"files": ["src/config/loader.ts"],
+				"functions": ["loadConfig"],
+				"maxCognitive": 19,
+				"maxCyclomatic": 26,
+				"reason": "Measured 17 on 2026-11-05; ratchet down when refactored",
+			},
+			{
+				"files": ["src/config/loader.ts"],
+				"functions": ["validateFileConfig"],
+				"maxCognitive": 38,
+				"maxCyclomatic": 29,
+				"reason": "Measured 36 on 2026-11-05; ratchet down when refactored",
+			},
+			{
+				"files": ["src/metadata.ts"],
+				"functions": ["extractMetadata"],
+				"maxCognitive": 14,
+				"reason": "Measured 12 on 2026-11-05; ratchet down when refactored",
+			},
+			{
+				"files": ["src/verifiers/flac/verify.ts"],
+				"functions": ["verifyFile"],
+				"maxCognitive": 19,
+				"reason": "Measured 17 on 2026-11-05; ratchet down when refactored",
+			},
+		],
+	},
+	"duplicates": {
+		// Below 70 the report is mostly shared idiom rather than shared logic
+		"minTokens": 70,
+		// The only setting that fails a dupes run, and zero means no limit; this low, any clone group fails
+		"threshold": 0.001,
+	},
+	"boundaries": {
+		// First match wins, so `core` stays last
+		"zones": [
+			{ "name": "entry", "patterns": ["src/index.ts"] },
+			{ "name": "cli", "patterns": ["src/cli/**"] },
+			{ "name": "core", "patterns": ["src/**"] },
+		],
+		"rules": [
+			{ "from": "core", "allow": ["core"] },
+			{ "from": "cli", "allow": ["cli", "core"] },
+			{ "from": "entry", "allow": ["cli", "core"] },
+		],
+	},
+}
