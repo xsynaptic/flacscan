@@ -28,7 +28,7 @@
 		"require-suppression-reason": "error",
 	},
 	"health": {
-		// ESLint has no cognitive-complexity rule, so this is the only ceiling on it
+		// ESLint's `complexity` is cyclomatic; this is the cognitive ceiling
 		"maxCognitive": 10,
 		// Zero disables CRAP, which fallow otherwise estimates from the module graph without coverage data
 		"maxCrap": 0,
