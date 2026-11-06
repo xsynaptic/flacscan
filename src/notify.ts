@@ -5,7 +5,6 @@ export function osaStringLiteral(value: string): string {
 	return `"${value.replaceAll('\\', '\\\\').replaceAll('"', String.raw`\"`)}"`;
 }
 
-// Best effort; a failed banner must never affect the scan outcome
 export async function sendNotification(title: string, message: string): Promise<boolean> {
 	if (process.platform !== 'darwin') {
 		console.warn('--notify is only supported on macOS; skipping notification');

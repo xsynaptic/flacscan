@@ -1,7 +1,6 @@
 import { vi } from 'vitest';
 
-// Silence ora spinners during tests. Their stderr writes, including the red ✖
-// from .fail(), otherwise leak into the test output and read like failures.
+// Spinner stderr, including the red ✖ from .fail(), otherwise reads like a test failure
 vi.mock('ora', () => {
 	const spinner = {
 		clear: () => spinner,

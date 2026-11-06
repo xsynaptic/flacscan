@@ -22,7 +22,7 @@ import {
 	upsertUnreadableFile,
 } from '#database/queries.ts';
 import { checkMountedPaths } from '#discovery.ts';
-import { directoryPrefix } from '#paths.ts';
+import { directoryPrefix, existsAsSpelled } from '#paths.ts';
 import { ensureBinary } from '#shell.ts';
 import { flacVerifier } from '#verifiers/flac/verify.ts';
 
@@ -42,6 +42,7 @@ export const recheckCommand = defineCommand({
 		await runCommand(
 			args,
 			{
+				exclusive: true,
 				async prepare() {
 					for (const bin of flacVerifier.requiredBinaries) {
 						await ensureBinary(bin.name, bin.hint);
@@ -78,7 +79,7 @@ export const recheckCommand = defineCommand({
 				await processPool(items, config.parallelism, async (item) => {
 					const filePath = item.row.current_path;
 
-					if (!fs.existsSync(filePath)) {
+					if (!existsAsSpelled(filePath)) {
 						if (item.source === 'files') {
 							deleteFileByPath(db, filePath);
 						} else {
@@ -100,7 +101,6 @@ export const recheckCommand = defineCommand({
 					if (outcome.kind === 'interrupted') return;
 
 					if (outcome.kind === 'corrupt') {
-						// A promoted unreadable file has no prior verdict, so it counts as new
 						const isKnown = item.source === 'files' && item.row.acknowledged_at !== null;
 						stats.corrupt++;
 						if (!isKnown) stats.newCorrupt++;
@@ -137,7 +137,6 @@ export const recheckCommand = defineCommand({
 	},
 });
 
-// A previously-unreadable file that now stats moves to files and follows the normal verdict path
 function promoteUnreadable(db: Database.Database, filePath: string): FileRow | undefined {
 	let stat: fs.Stats;
 	try {

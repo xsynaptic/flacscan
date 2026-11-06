@@ -13,7 +13,7 @@ export const acceptCommand = defineCommand({
 		name: 'accept',
 	},
 	async run({ args }) {
-		await runCommand(args, {}, (db) => {
+		await runCommand(args, { exclusive: true }, (db) => {
 			const { corrupt, unreadable } = acknowledgeAllIssues(db);
 			console.log(
 				`Accepted ${String(corrupt)} corrupt and ${String(unreadable)} unreadable file(s).`,

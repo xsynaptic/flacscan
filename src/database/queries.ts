@@ -5,8 +5,7 @@ import type { FlacMetadata } from '#metadata.ts';
 
 import { directoryPrefix } from '#paths.ts';
 
-// Prepared statements are cached per database handle; re-preparing on every call
-// dominates discovery cost on large collections
+// Re-preparing on every call dominates discovery cost on large collections
 const statementCaches = new WeakMap<Database.Database, Map<string, Database.Statement>>();
 
 export function acknowledgeAllIssues(database: Database.Database): {
@@ -112,26 +111,34 @@ export function getFilesNeedingVerification(
 
 	const cutoff = new Date(Date.now() - rescanDays * 24 * 60 * 60 * 1000).toISOString();
 
-	const dirClauses = directories.map(() => String.raw`current_path LIKE ? ESCAPE '\'`).join(' OR ');
-	const escapedDirs = directories.map((dir) => escapeLikePattern(directoryPrefix(dir)) + '%');
+	const { bounds, clauses } = underDirectories(directories);
 
 	return prepareCached(
 		database,
 		`
     SELECT * FROM files
-    WHERE (${dirClauses})
+    WHERE (${clauses})
       AND (last_result = 'pending'
         OR (last_result IN ('healthy', 'corrupt') AND (last_verified_at IS NULL OR last_verified_at < ?)))
     ORDER BY last_verified_at ASC NULLS FIRST
     LIMIT ?
   `,
-	).all(...escapedDirs, cutoff, batchSize) as FileRow[];
+	).all(...bounds, cutoff, batchSize) as FileRow[];
+}
+
+export function getPathsUnder(
+	database: Database.Database,
+	table: 'files' | 'unreadable_files',
+	directories: string[],
+): string[] {
+	if (directories.length === 0) return [];
+	const { bounds, clauses } = underDirectories(directories);
+	return prepareCached(database, `SELECT current_path FROM ${table} WHERE ${clauses}`)
+		.pluck()
+		.all(...bounds) as string[];
 }
 
 export function getRecoveryCandidates(database: Database.Database): FileRow[] {
-	// Always skips files that already have a recovery outcome; to re-attempt them, clear
-	// their recovery_* columns in SQLite directly. (Avoids carrying a one-off `--retry` flag
-	// on `recover` itself for a workflow that's rare and easy to do with one UPDATE.)
 	return prepareCached(
 		database,
 		`SELECT * FROM files WHERE last_result = 'corrupt' AND recovery_attempted_at IS NULL ORDER BY current_path`,
@@ -333,11 +340,14 @@ export function upsertUnreadableFile(
 	).run(file.current_path, file.error_output, now, now);
 }
 
-function escapeLikePattern(value: string): string {
-	return value
-		.replaceAll('\\', '\\\\')
-		.replaceAll('%', String.raw`\%`)
-		.replaceAll('_', String.raw`\_`);
+function underDirectories(directories: string[]) {
+	const clauses = directories.map(() => '(current_path >= ? AND current_path < ?)').join(' OR ');
+	const bounds = directories.flatMap((directory) => {
+		const prefix = directoryPrefix(directory);
+		const separator = prefix.codePointAt(prefix.length - 1) ?? 0;
+		return [prefix, prefix.slice(0, -1) + String.fromCodePoint(separator + 1)];
+	});
+	return { bounds, clauses };
 }
 
 function prepareCached(database: Database.Database, sql: string): Database.Statement {

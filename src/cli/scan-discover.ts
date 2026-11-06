@@ -1,18 +1,21 @@
 import type Database from 'better-sqlite3';
+import type { Ora } from 'ora';
 
+import chalk from 'chalk';
 import fs from 'node:fs';
 import ora from 'ora';
 
 import type { FlacScanConfig } from '#config/types.ts';
-import type { FileRow } from '#database/types.ts';
 
 import { isShuttingDown } from '#cli/process-pool.ts';
 import {
 	clearRecoveryOutcome,
+	deleteFileByPath,
 	deleteUnreadableByPath,
 	findFileByPath,
 	findFilesBySizeAndMtime,
 	findUnreadableByPath,
+	getPathsUnder,
 	updateFilePath,
 	upsertFile,
 	upsertUnreadableFile,
@@ -20,140 +23,241 @@ import {
 import { logFileMoved, logUnreadable } from '#logging/scan-log.ts';
 import { directoryPrefix } from '#paths.ts';
 
-// Stat and write in chunked transactions; one autocommit per file is the dominant
-// cost on the initial scan of a large collection
+// One autocommit per file dominates the initial scan of a large collection
 const CHUNK_SIZE = 500;
 
 interface DiscoveryStats {
 	moved: number;
 	processed: number;
+	pruned: number;
 	skipped: number;
 	unreadable: number;
+}
+
+interface Observed {
+	mtime: string;
+	size: number;
+}
+
+interface Observation {
+	observed: Map<string, Observed>;
+	unreadable: Set<string>;
+}
+
+interface Destination {
+	existing: boolean;
+	filePath: string;
+	stat: Observed;
+}
+
+interface Move {
+	from: string;
+	to: Destination;
+}
+
+interface Progress {
+	spinner: Ora;
+	stats: DiscoveryStats;
+	total: number;
 }
 
 export async function runDiscovery(
 	db: Database.Database,
 	files: string[],
 	config: FlacScanConfig,
-	availableDirectories: string[],
+	walkedDirectories: string[],
 ): Promise<DiscoveryStats> {
-	const spinner = ora({
-		discardStdin: false,
-		text: `Discovery: processing 0/${String(files.length)} files`,
-	}).start();
-
-	const stats: DiscoveryStats = {
-		moved: 0,
-		processed: 0,
-		skipped: 0,
-		unreadable: 0,
+	const listed = [...new Set(files)];
+	const progress: Progress = {
+		spinner: ora({
+			discardStdin: false,
+			text: `Discovery: processing 0/${String(listed.length)} files`,
+		}).start(),
+		stats: { moved: 0, processed: 0, pruned: 0, skipped: 0, unreadable: 0 },
+		total: listed.length,
 	};
+	const { spinner, stats } = progress;
 
-	for (let offset = 0; offset < files.length && !isShuttingDown(); offset += CHUNK_SIZE) {
-		const chunk = files.slice(offset, offset + CHUNK_SIZE);
+	const observation = await observe(db, listed, config, progress);
+	if (observation !== undefined) {
+		const destinations = classify(db, observation, stats);
+		const moves = planMoves(db, destinations, observation, walkedDirectories);
+		applyMoves(db, moves, config);
+		stats.moved = moves.length;
+		const moved = new Set(moves.map((move) => move.to.filePath));
+		await upsertChanged(
+			db,
+			destinations.filter((destination) => !moved.has(destination.filePath)),
+		);
+	}
+
+	if (observation === undefined || isShuttingDown()) {
+		spinner.warn(
+			`Discovery interrupted: ${String(stats.processed)}/${String(listed.length)} files processed`,
+		);
+		return stats;
+	}
+
+	stats.pruned = pruneUnlisted(db, observation, walkedDirectories, spinner);
+	const movedSummary = stats.moved > 0 ? `, ${String(stats.moved)} moved` : '';
+	const prunedSummary = stats.pruned > 0 ? `, ${String(stats.pruned)} pruned` : '';
+	spinner.succeed(
+		`Discovery complete: ${String(listed.length)} files (${String(stats.skipped)} cached, ${String(stats.unreadable)} unreadable${movedSummary}${prunedSummary})`,
+	);
+	return stats;
+}
+
+async function observe(
+	db: Database.Database,
+	listed: string[],
+	config: FlacScanConfig,
+	progress: Progress,
+): Promise<Observation | undefined> {
+	const observation: Observation = { observed: new Map(), unreadable: new Set() };
+	for (let offset = 0; offset < listed.length; offset += CHUNK_SIZE) {
+		if (isShuttingDown()) return undefined;
+		const chunk = listed.slice(offset, offset + CHUNK_SIZE);
 		db.transaction(() => {
-			for (const filePath of chunk) {
-				let mtime: string;
-				let size: number;
-
-				try {
-					const stat = fs.statSync(filePath);
-					mtime = stat.mtime.toISOString();
-					size = stat.size;
-				} catch (error) {
-					// ENOENT means it vanished between walk and stat; not an unreadable issue, skip it
-					if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-						upsertUnreadableFile(db, {
-							current_path: filePath,
-							error_output: String(error),
-						});
-						logUnreadable(config.log_path, filePath, String(error));
-						stats.unreadable++;
-					}
-					stats.processed++;
-					spinner.text = `Discovery: ${String(stats.processed)}/${String(files.length)} files (${String(stats.skipped)} cached)`;
-					continue;
-				}
-
-				const existing = findFileByPath(db, filePath);
-				if (existing?.file_mtime === mtime && existing.file_size === size) {
-					stats.skipped++;
-					stats.processed++;
-					spinner.text = `Discovery: ${String(stats.processed)}/${String(files.length)} files (${String(stats.skipped)} cached)`;
-					continue;
-				}
-
-				if (!existing) {
-					const moved = findMoveSource(db, filePath, mtime, size, availableDirectories);
-					if (moved) {
-						updateFilePath(db, moved.current_path, filePath);
-						logFileMoved(config.log_path, moved.current_path, filePath);
-						stats.moved++;
-						stats.processed++;
-						spinner.text = `Discovery: ${String(stats.processed)}/${String(files.length)} files (${String(stats.skipped)} cached)`;
-						continue;
-					}
-				}
-
-				if (findUnreadableByPath(db, filePath)) {
-					// Readable again; rejoin the normal pipeline
-					deleteUnreadableByPath(db, filePath);
-				}
-
-				try {
-					upsertFile(db, {
-						current_path: filePath,
-						file_mtime: mtime,
-						file_size: size,
-					});
-					// The file changed (or is new); any prior `recover` verdict is moot now
-					if (existing) {
-						clearRecoveryOutcome(db, filePath);
-					}
-				} catch (error) {
-					console.warn(`Warning: failed to update database for ${filePath}: ${String(error)}`);
-				}
-
-				stats.processed++;
-				spinner.text = `Discovery: ${String(stats.processed)}/${String(files.length)} files (${String(stats.skipped)} cached)`;
-			}
+			for (const filePath of chunk) observeFile(db, filePath, config, observation, progress);
 		})();
 		// Yield so SIGINT and the spinner can run between chunks
 		await new Promise((resolve) => setImmediate(resolve));
 	}
-
-	if (isShuttingDown()) {
-		spinner.warn(
-			`Discovery interrupted: ${String(stats.processed)}/${String(files.length)} files processed`,
-		);
-	} else {
-		const movedSummary = stats.moved > 0 ? `, ${String(stats.moved)} moved` : '';
-		spinner.succeed(
-			`Discovery complete: ${String(files.length)} files (${String(stats.skipped)} cached, ${String(stats.unreadable)} unreadable${movedSummary})`,
-		);
-	}
-
-	return stats;
+	return isShuttingDown() ? undefined : observation;
 }
 
-// A new path is a move destination only when exactly one row shares size+mtime,
-// its old path is gone, and that old path sits under a mounted root (else we
-// can't tell a move from a copy of an offline original)
-function findMoveSource(
+function observeFile(
 	db: Database.Database,
-	newPath: string,
-	mtime: string,
-	size: number,
-	availableDirectories: string[],
-): FileRow | undefined {
-	const candidates = findFilesBySizeAndMtime(db, size, mtime);
-	if (candidates.length !== 1) return undefined;
-	const candidate = candidates[0];
-	if (candidate === undefined || candidate.current_path === newPath) return undefined;
-	const underAvailableRoot = availableDirectories.some((directory) =>
-		candidate.current_path.startsWith(directoryPrefix(directory)),
+	filePath: string,
+	config: FlacScanConfig,
+	observation: Observation,
+	{ spinner, stats, total }: Progress,
+) {
+	stats.processed++;
+	spinner.text = `Discovery: ${String(stats.processed)}/${String(total)} files`;
+	try {
+		const stat = fs.statSync(filePath);
+		observation.observed.set(filePath, { mtime: stat.mtime.toISOString(), size: stat.size });
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+		observation.unreadable.add(filePath);
+		upsertUnreadableFile(db, { current_path: filePath, error_output: String(error) });
+		logUnreadable(config.log_path, filePath, String(error));
+		stats.unreadable++;
+	}
+}
+
+function classify(
+	db: Database.Database,
+	{ observed }: Observation,
+	stats: DiscoveryStats,
+): Destination[] {
+	const destinations: Destination[] = [];
+	for (const [filePath, stat] of observed) {
+		const existing = findFileByPath(db, filePath);
+		if (existing?.file_mtime === stat.mtime && existing.file_size === stat.size) {
+			stats.skipped++;
+			continue;
+		}
+		destinations.push({ existing: existing !== undefined, filePath, stat });
+	}
+	return destinations;
+}
+
+function planMoves(
+	db: Database.Database,
+	destinations: Destination[],
+	{ observed, unreadable }: Observation,
+	walkedDirectories: string[],
+): Move[] {
+	const prefixes = walkedDirectories.map((directory) => directoryPrefix(directory));
+	const candidatesByDestination = destinations.map((destination) =>
+		findFilesBySizeAndMtime(db, destination.stat.size, destination.stat.mtime)
+			.map((row) => row.current_path)
+			.filter((candidate) => {
+				if (candidate === destination.filePath || unreadable.has(candidate)) return false;
+				if (prefixes.every((prefix) => !candidate.startsWith(prefix))) return false;
+				const now = observed.get(candidate);
+				return now?.size !== destination.stat.size || now.mtime !== destination.stat.mtime;
+			}),
 	);
-	if (!underAvailableRoot) return undefined;
-	if (fs.existsSync(candidate.current_path)) return undefined;
-	return candidate;
+
+	const claims = new Map<string, number>();
+	for (const candidates of candidatesByDestination) {
+		for (const candidate of candidates) claims.set(candidate, (claims.get(candidate) ?? 0) + 1);
+	}
+
+	const moves: Move[] = [];
+	for (const [index, destination] of destinations.entries()) {
+		const candidates = candidatesByDestination[index] ?? [];
+		const [only] = candidates;
+		if (only !== undefined && candidates.length === 1 && claims.get(only) === 1) {
+			moves.push({ from: only, to: destination });
+		}
+	}
+	return moves;
+}
+
+function applyMoves(db: Database.Database, moves: Move[], config: FlacScanConfig) {
+	if (moves.length === 0) return;
+	const sources = new Set(moves.map((move) => move.from));
+	db.transaction(() => {
+		for (const move of moves) {
+			if (move.to.existing && !sources.has(move.to.filePath)) {
+				deleteFileByPath(db, move.to.filePath);
+			}
+		}
+		for (const [index, move] of moves.entries()) {
+			updateFilePath(db, move.from, `moving:${String(index)}`);
+		}
+		for (const [index, move] of moves.entries()) {
+			updateFilePath(db, `moving:${String(index)}`, move.to.filePath);
+			deleteUnreadableByPath(db, move.to.filePath);
+		}
+	})();
+	for (const move of moves) logFileMoved(config.log_path, move.from, move.to.filePath);
+}
+
+async function upsertChanged(db: Database.Database, destinations: Destination[]) {
+	for (let offset = 0; offset < destinations.length && !isShuttingDown(); offset += CHUNK_SIZE) {
+		const chunk = destinations.slice(offset, offset + CHUNK_SIZE);
+		db.transaction(() => {
+			for (const destination of chunk) upsertDestination(db, destination);
+		})();
+		await new Promise((resolve) => setImmediate(resolve));
+	}
+}
+
+function upsertDestination(db: Database.Database, { existing, filePath, stat }: Destination) {
+	if (findUnreadableByPath(db, filePath)) {
+		deleteUnreadableByPath(db, filePath);
+	}
+	try {
+		upsertFile(db, { current_path: filePath, file_mtime: stat.mtime, file_size: stat.size });
+		if (existing) clearRecoveryOutcome(db, filePath);
+	} catch (error) {
+		console.warn(`Warning: failed to update database for ${filePath}: ${String(error)}`);
+	}
+}
+
+function pruneUnlisted(
+	db: Database.Database,
+	{ observed, unreadable }: Observation,
+	walkedDirectories: string[],
+	spinner: Ora,
+): number {
+	const isListed = (filePath: string) => observed.has(filePath) || unreadable.has(filePath);
+	const files = getPathsUnder(db, 'files', walkedDirectories).filter((row) => !isListed(row));
+	const unreadableRows = getPathsUnder(db, 'unreadable_files', walkedDirectories).filter(
+		(row) => !isListed(row),
+	);
+	db.transaction(() => {
+		for (const filePath of files) deleteFileByPath(db, filePath);
+		for (const filePath of unreadableRows) deleteUnreadableByPath(db, filePath);
+	})();
+	for (const filePath of [...files, ...unreadableRows]) {
+		spinner.clear();
+		console.log(chalk.blue(`  PRUNED ${filePath}`));
+	}
+	return files.length + unreadableRows.length;
 }

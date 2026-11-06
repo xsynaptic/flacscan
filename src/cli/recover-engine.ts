@@ -35,10 +35,7 @@ export const flacEngine: RecoveryEnv = {
 	utimes: (path, atimeMs, mtimeMs) => fs.promises.utimes(path, atimeMs / 1000, mtimeMs / 1000),
 };
 
-// Curated subset of tags to carry onto the recovered file:
-// - Metaflac's tag import is line-based; a value containing newlines aborts the whole import
-// - DJ blobs (BEATGRID/SERATO_*) are the usual offenders; these short fields never have newlines
-// - And these are the ones a library manager actually needs
+// Metaflac's line-based tag import aborts on any value with a newline (DJ blobs such as SERATO_*); these never have one
 const CARRIED_TAGS = [
 	'TITLE',
 	'ARTIST',
@@ -67,8 +64,6 @@ const CARRIED_TAGS = [
 	'COPYRIGHT',
 ];
 
-// Copy the original's tags and front-cover onto the re-encode (raw PCM has neither)
-// Best effort: callers treat a throw as a warning
 async function carryMetadata(src: string, dest: string): Promise<void> {
 	const { stdout } = await execFile('metaflac', [
 		...CARRIED_TAGS.map((name) => `--show-tag=${name}`),
@@ -103,9 +98,6 @@ async function carryMetadata(src: string, dest: string): Promise<void> {
 	}
 }
 
-// Decode src to raw PCM, pipe it straight into a max-effort re-encode at dest:
-// - Decoder runs stop-at-first-error, so it emits a contiguous clean prefix then closes
-// - Encoder writes exactly that prefix
 function decodeReencode(src: string, dest: string, format: FlacFormat): Promise<void> {
 	return new Promise((resolve, reject) => {
 		const decoder = spawn(
@@ -167,10 +159,7 @@ function decodeReencode(src: string, dest: string, format: FlacFormat): Promise<
 			resolve();
 		}
 
-		// Swallow stream errors on the wired-up pipes:
-		// - On SIGINT (Ctrl+C) the flac children die and these sockets EPIPE
-		// - Without listeners that becomes an unhandled 'error' and crashes the process
-		// - The close handlers below report the real outcome
+		// SIGINT kills the flac children and EPIPEs these pipes; unhandled, that crashes the process
 		decoder.stdout.on('error', ignoreStreamError);
 		decoder.stderr.on('error', ignoreStreamError);
 		encoder.stdin.on('error', ignoreStreamError);

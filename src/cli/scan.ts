@@ -1,3 +1,5 @@
+import type { Ora } from 'ora';
+
 import { defineCommand } from 'citty';
 import ora from 'ora';
 
@@ -11,6 +13,20 @@ import { logScanComplete, logScanStart } from '#logging/scan-log.ts';
 import { sendNotification } from '#notify.ts';
 import { ensureBinary } from '#shell.ts';
 import { flacVerifier } from '#verifiers/flac/verify.ts';
+
+function reportWalk(spinner: Ora, walk: Awaited<ReturnType<typeof discoverFiles>>) {
+	const { files, incomplete, mountCheck } = walk;
+	if (mountCheck.available.length === 0) {
+		spinner.warn(`No configured paths are available; skipped: ${mountCheck.skipped.join(', ')}`);
+	} else {
+		spinner.succeed(
+			`Found ${String(files.length)} FLAC files across ${String(mountCheck.available.length)} path(s)`,
+		);
+	}
+	for (const { directory, error } of incomplete) {
+		console.warn(`Warning: could not walk ${directory} (${error}); its rows are left as they are`);
+	}
+}
 
 export const scanCommand = defineCommand({
 	args: {
@@ -49,6 +65,7 @@ export const scanCommand = defineCommand({
 		await runCommand(
 			args,
 			{
+				exclusive: true,
 				async prepare(config) {
 					for (const bin of flacVerifier.requiredBinaries) {
 						await ensureBinary(bin.name, bin.hint);
@@ -61,21 +78,10 @@ export const scanCommand = defineCommand({
 				},
 			},
 			async (db, config) => {
-				// File walk
 				const walkSpinner = ora({ discardStdin: false, text: 'Scanning directories...' }).start();
-				const { files, mountCheck } = await discoverFiles(
-					config.directories,
-					flacVerifier.extensions,
-				);
-				if (mountCheck.available.length === 0) {
-					walkSpinner.warn(
-						`No configured paths are available; skipped: ${mountCheck.skipped.join(', ')}`,
-					);
-				} else {
-					walkSpinner.succeed(
-						`Found ${String(files.length)} FLAC files across ${String(mountCheck.available.length)} path(s)`,
-					);
-				}
+				const walk = await discoverFiles(config.directories, flacVerifier.extensions);
+				reportWalk(walkSpinner, walk);
+				const { files, mountCheck, walked } = walk;
 
 				logScanStart(
 					config.log_path,
@@ -84,14 +90,12 @@ export const scanCommand = defineCommand({
 					mountCheck.skipped,
 				);
 
-				// Discovery phase
-				await runDiscovery(db, files, config, mountCheck.available);
+				const discoveryStats = await runDiscovery(db, files, config, walked);
 
 				if (isShuttingDown()) {
 					return;
 				}
 
-				// Verification phase
 				const verificationStats = await runVerification(
 					db,
 					config,
@@ -99,17 +103,18 @@ export const scanCommand = defineCommand({
 					flacVerifier,
 				);
 
+				const pruned = discoveryStats.pruned + (verificationStats?.pruned ?? 0);
 				logScanComplete(config.log_path, {
 					corrupt: verificationStats?.corrupt ?? 0,
 					healthy: verificationStats?.healthy ?? 0,
 					newCorrupt: verificationStats?.newCorrupt ?? 0,
-					pruned: verificationStats?.pruned ?? 0,
+					pruned,
 					total: verificationStats
 						? verificationStats.healthy +
 							verificationStats.corrupt +
 							verificationStats.fixed +
-							verificationStats.pruned
-						: 0,
+							pruned
+						: pruned,
 				});
 
 				const newCorrupt = verificationStats?.newCorrupt ?? 0;

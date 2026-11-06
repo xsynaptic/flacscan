@@ -218,7 +218,7 @@ describe('acknowledgement', () => {
 describe('schema migration', () => {
 	it('adds acknowledged_at to a database created without it', () => {
 		const legacy = new BetterSqlite3(':memory:');
-		// Pre-007 schema literal: everything except acknowledged_at
+		// Schema from before acknowledged_at existed
 		legacy.exec(`
 			CREATE TABLE files (
 				current_path    TEXT PRIMARY KEY,
@@ -382,7 +382,6 @@ describe('upsertFile', () => {
 			last_result: 'corrupt',
 		});
 
-		// Re-discovered with different stats means the bytes changed; the prior verdict is stale.
 		upsertFile(db, {
 			current_path: '/music/test.flac',
 			file_mtime: '2025-06-01T00:00:00.000Z',
@@ -651,7 +650,6 @@ describe('recovery outcomes', () => {
 			result: 'unsuitable',
 		});
 
-		// Skips already-attempted ('/music/a.flac' has a recovery_result).
 		expect(getRecoveryCandidates(db).map((file) => file.current_path)).toEqual([
 			'/music/b.flac',
 			'/music/c.flac',

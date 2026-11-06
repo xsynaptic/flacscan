@@ -20,7 +20,6 @@ export interface AttemptResult {
 	warning: null | string;
 }
 
-// A reachable corrupt file paired with the `[Recovered].flac` path that would sit next to it.
 export interface RecoverItem {
 	atimeMs: number;
 	dest: string;
@@ -76,7 +75,6 @@ export async function attemptRecovery(
 		return result('interrupted', { detail: 'interrupted', lostSamples: null });
 	}
 
-	// Queued when Ctrl+C arrived: don't start, leave unrecorded for the next run
 	if (env.shouldStop()) return interrupted();
 
 	let format: FlacFormat;
@@ -85,7 +83,6 @@ export async function attemptRecovery(
 	} catch (error) {
 		if (env.shouldStop()) return interrupted();
 		if (!env.exists(src)) {
-			// Source vanished since the worklist was built; transient, retry next run
 			return result('failed', { detail: 'source disappeared during recovery', lostSamples: null });
 		}
 		// Metaflac ran but couldn't read the file: a verdict about the file, not a glitch, so record it
@@ -164,7 +161,6 @@ export async function attemptRecovery(
 	} catch (error) {
 		await env.unlink(partial);
 		if (env.shouldStop()) return interrupted();
-		// Clean re-encode but couldn't place it (dest dir vanished, etc.); leave unrecorded to retry
 		return result('failed', {
 			claimedSamples: format.totalSamples,
 			deliveredSamples: delivered,

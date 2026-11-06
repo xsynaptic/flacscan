@@ -5,6 +5,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { checkMountedPaths, discoverFiles } from '#discovery.ts';
 
+import { caseInsensitiveTmp } from './helpers.ts';
+
 const EXTENSIONS = ['.flac'];
 
 const byPath = (a: string, b: string) => a.localeCompare(b);
@@ -35,6 +37,18 @@ describe('checkMountedPaths', () => {
 		expect(result.available).toEqual([tempDir]);
 		expect(result.skipped).toEqual([missing]);
 	});
+
+	it.runIf(caseInsensitiveTmp)(
+		'reports a root typed in another case under its disk spelling, once',
+		() => {
+			const root = path.join(tempDir, 'Music');
+			fs.mkdirSync(root);
+
+			const result = checkMountedPaths([path.join(tempDir, 'music'), root]);
+
+			expect(result.available).toEqual([root]);
+		},
+	);
 });
 
 describe('discoverFiles', () => {

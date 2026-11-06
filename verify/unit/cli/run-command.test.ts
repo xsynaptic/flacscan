@@ -1,5 +1,6 @@
 import type Database from 'better-sqlite3';
 
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -95,5 +96,105 @@ describe('runCommand', () => {
 		expect(process.exitCode).toBe(2);
 		expect(body).not.toHaveBeenCalled();
 		expect(fs.existsSync(dbPath)).toBe(false);
+	});
+});
+
+function deadPid(): number {
+	const { pid } = spawnSync(process.execPath, ['-e', '']);
+	return pid;
+}
+
+describe('runCommand run lock', () => {
+	const runLock = path.resolve('src/run-lock.ts');
+
+	it('holds a lock naming this process while an exclusive body runs, then releases it', async () => {
+		const dbPath = path.join(tempDir, 'flacscan.db');
+		let heldBy: string | undefined;
+
+		await runCommand(args(), { exclusive: true }, () => {
+			heldBy = fs.readFileSync(`${dbPath}.lock`, 'utf8');
+		});
+
+		expect(heldBy).toBe(String(process.pid));
+		expect(fs.existsSync(`${dbPath}.lock`)).toBe(false);
+	});
+
+	it('refuses a second exclusive run with exit 2, naming the holder, without opening the database', async () => {
+		const dbPath = path.join(tempDir, 'flacscan.db');
+		const livePid = String(process.pid);
+		fs.writeFileSync(`${dbPath}.lock`, livePid);
+		const body = vi.fn();
+
+		await runCommand(args(), { exclusive: true }, body);
+
+		expect(process.exitCode).toBe(2);
+		expect(body).not.toHaveBeenCalled();
+		expect(fs.existsSync(dbPath)).toBe(false);
+		expect(console.error).toHaveBeenCalledWith(
+			`Another flacscan run (pid ${livePid}) is using ${dbPath}; try again when it finishes.`,
+		);
+		expect(fs.readFileSync(`${dbPath}.lock`, 'utf8')).toBe(livePid);
+	});
+
+	it('refuses an exclusive run nested inside another', async () => {
+		const inner = vi.fn();
+
+		await runCommand(args(), { exclusive: true }, async () => {
+			await runCommand(args(), { exclusive: true }, inner);
+		});
+
+		expect(inner).not.toHaveBeenCalled();
+		expect(process.exitCode).toBe(2);
+	});
+
+	it('takes over a lock left by a process that is gone', async () => {
+		const dbPath = path.join(tempDir, 'flacscan.db');
+		fs.writeFileSync(`${dbPath}.lock`, String(deadPid()));
+		const body = vi.fn();
+
+		await runCommand(args(), { exclusive: true }, body);
+
+		expect(body).toHaveBeenCalledOnce();
+		expect(process.exitCode ?? 0).toBe(0);
+		expect(fs.existsSync(`${dbPath}.lock`)).toBe(false);
+	});
+
+	it('releases the lock when the body throws', async () => {
+		const dbPath = path.join(tempDir, 'flacscan.db');
+
+		await runCommand(args(), { exclusive: true }, () => {
+			throw new Error('unexpected');
+		});
+
+		expect(process.exitCode).toBe(2);
+		expect(fs.existsSync(`${dbPath}.lock`)).toBe(false);
+	});
+
+	it('runs a non-exclusive command while the lock is held', async () => {
+		const dbPath = path.join(tempDir, 'flacscan.db');
+		fs.writeFileSync(`${dbPath}.lock`, String(process.pid));
+		const body = vi.fn();
+
+		await runCommand(args(), {}, body);
+
+		expect(body).toHaveBeenCalledOnce();
+		expect(process.exitCode ?? 0).toBe(0);
+	});
+
+	it('releases the lock when the process exits mid-run, as a second Ctrl+C does', () => {
+		const dbPath = path.join(tempDir, 'flacscan.db');
+		const script = `import fs from 'node:fs';
+import { acquireRunLock } from ${JSON.stringify(runLock)};
+acquireRunLock(${JSON.stringify(dbPath)});
+console.log(fs.existsSync(${JSON.stringify(`${dbPath}.lock`)}));
+process.exit(2);`;
+
+		const child = spawnSync(process.execPath, ['--input-type=module', '-e', script], {
+			encoding: 'utf8',
+		});
+
+		expect(child.status).toBe(2);
+		expect(child.stdout.trim()).toBe('true');
+		expect(fs.existsSync(`${dbPath}.lock`)).toBe(false);
 	});
 });

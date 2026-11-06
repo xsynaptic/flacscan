@@ -24,7 +24,6 @@ describe('classifyRecovery', () => {
 	});
 
 	it('accepts loss exactly at the limit', () => {
-		// 3.0s at 44.1kHz = 132300 samples lost off the tail.
 		const result = classifyRecovery({ ...base, deliveredSamples: 1_000_000 - 132_300 });
 		expect(result.accepted).toBe(true);
 		expect(result.lostSamples).toBe(132_300);

@@ -1,23 +1,12 @@
-// Pure helpers for recover: the accept/reject rule, `[Recovered].flac` naming, and the
-// per-volume disk-space check. No I/O, no CLI deps.
-
 import path from 'node:path';
-
-// The reference decoder, in its default mode, stops at the first decode error, so it emits
-// a contiguous run `[0 .. delivered)` and nothing after. Whatever audio is missing is
-// therefore provably the *tail* (`[delivered .. claimed)`). `classifyRecovery` keeps the
-// re-encode only when that tail loss is small, the decoder actually truncated (so this
-// isn't a fully-decodable file with an un-glitch-detected MD5 mismatch), the claimed length
-// is known, and the re-encoded file itself passes `flac -t`.
 
 export interface RecoveryClassification {
 	accepted: boolean;
-	// Reason text when rejected (maps to `recovery_detail`); null when accepted.
 	detail: null | string;
-	// `claimed - delivered`, the audio lost off the end; null when the claimed length is unknown.
 	lostSamples: null | number;
 }
 
+// flac stops at the first decode error, so missing audio is always the tail `[delivered, claimed)`
 export function classifyRecovery(input: {
 	claimedSamples: number;
 	deliveredSamples: number;
@@ -46,8 +35,6 @@ export function classifyRecovery(input: {
 		};
 	}
 	if (deliveredSamples >= claimedSamples) {
-		// Decoded the whole stream without truncating e.g. an MD5-only mismatch. A re-encode
-		// would just carry the un-glitch-detected corruption forward, so it isn't a clean copy.
 		return {
 			accepted: false,
 			detail: 'decodes fully, no truncation (re-encode would keep the corruption)',
@@ -58,9 +45,10 @@ export function classifyRecovery(input: {
 	const lostSamples = claimedSamples - deliveredSamples;
 	const lostSeconds = lostSamples / sampleRate;
 	if (lostSeconds > maxTrailingLossSeconds) {
+		const printedLoss = Math.ceil((lostSamples * 100) / sampleRate) / 100;
 		return {
 			accepted: false,
-			detail: `trailing loss ${lostSeconds.toFixed(1)}s exceeds the ${maxTrailingLossSeconds.toFixed(1)}s limit`,
+			detail: `trailing loss ${printedLoss.toFixed(2)}s exceeds the ${String(maxTrailingLossSeconds)}s limit`,
 			lostSamples,
 		};
 	}
@@ -72,7 +60,6 @@ export function classifyRecovery(input: {
 
 const RECOVERED_SUFFIX = ' [Recovered]';
 
-/** Per volume, flag any that can't hold its pending recovered files while keeping `minFreeBytes` free; empty array means all fit. Pure. */
 export function findSpaceViolations(
 	items: readonly { dev: number; size: number }[],
 	volumes: readonly { dev: number; freeBytes: number }[],
@@ -103,7 +90,6 @@ export function findSpaceViolations(
 	return violations;
 }
 
-// Discovery skips a recovered file only while its original still sits beside it
 export function originalNameForRecoveredFile(fileName: string): null | string {
 	const extension = path.extname(fileName);
 	const base = path.basename(fileName, extension);

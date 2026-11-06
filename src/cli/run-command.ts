@@ -3,12 +3,17 @@ import type { FlacScanConfig } from '#config/types.ts';
 import { loadConfig } from '#config/loader.ts';
 import { openDatabase } from '#database/connection.ts';
 import { FlacScanError } from '#errors.ts';
+import { acquireRunLock } from '#run-lock.ts';
 
 type Database = ReturnType<typeof openDatabase>;
 
 interface RunCommandOptions {
-	// Runs after config load and before the database opens; binary checks live here
+	exclusive?: boolean;
 	prepare?: (config: FlacScanConfig) => Promise<void> | void;
+}
+
+function lockIfExclusive(options: RunCommandOptions, dbPath: string) {
+	return options.exclusive === true ? acquireRunLock(dbPath) : undefined;
 }
 
 export async function runCommand(
@@ -19,11 +24,14 @@ export async function runCommand(
 	try {
 		const config = loadConfig(args);
 		await options.prepare?.(config);
-		const db = openDatabase(config.db_path);
+		const releaseLock = lockIfExclusive(options, config.db_path);
+		let db: Database | undefined;
 		try {
+			db = openDatabase(config.db_path);
 			await body(db, config);
 		} finally {
-			db.close();
+			db?.close();
+			releaseLock?.();
 		}
 	} catch (error) {
 		if (error instanceof FlacScanError) {

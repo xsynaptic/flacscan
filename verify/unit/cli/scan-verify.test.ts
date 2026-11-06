@@ -12,7 +12,7 @@ import { runVerification } from '#cli/scan-verify.ts';
 import { findFileByPath, upsertFile } from '#database/queries.ts';
 import { initializeSchema } from '#database/schema.ts';
 
-import { makeTestConfig } from '../helpers.ts';
+import { caseInsensitiveTmp, makeTestConfig } from '../helpers.ts';
 
 let db: Database.Database;
 let tempDir: string;
@@ -127,6 +127,18 @@ describe('runVerification', () => {
 
 		expect(stats?.pruned).toBe(1);
 		expect(findFileByPath(db, filePath)).toBeUndefined();
+	});
+
+	it.runIf(caseInsensitiveTmp)('prunes a row keyed by a case alias of a file', async () => {
+		fs.writeFileSync(path.join(tempDir, 'Track.flac'), 'data');
+		const alias = path.join(tempDir, 'track.flac');
+		upsertFile(db, { current_path: alias, file_mtime: null, file_size: null });
+		const verifier = fakeVerifier(() => Promise.resolve({ status: 'healthy' }));
+
+		const stats = await runVerification(db, makeTestConfig(tempDir), [tempDir], verifier);
+
+		expect(stats?.pruned).toBe(1);
+		expect(findFileByPath(db, alias)).toBeUndefined();
 	});
 
 	it('fixes a corrupt file when fix is enabled', async () => {

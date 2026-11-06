@@ -11,7 +11,7 @@ import { getRecoveryCandidates, updateVerificationResult, upsertFile } from '#da
 import { initializeSchema } from '#database/schema.ts';
 import { FlacScanError } from '#errors.ts';
 
-import { makeTestConfig } from '../helpers.ts';
+import { caseInsensitiveTmp, makeTestConfig } from '../helpers.ts';
 
 let db: Database.Database;
 let tempDir: string;
@@ -41,7 +41,6 @@ describe('runRecovery disk-space preflight', () => {
 	it('aborts before writing when a volume would drop below min_free_bytes', async () => {
 		seedCorrupt('a.flac');
 		seedCorrupt('b.flac');
-		// A min-free larger than any real volume guarantees the preflight finds a shortfall
 		const config = makeTestConfig(tempDir, { min_free_bytes: Number.MAX_SAFE_INTEGER });
 		const rows = getRecoveryCandidates(db);
 		const reportEntries: never[] = [];
@@ -65,6 +64,20 @@ describe('runRecovery disk-space preflight', () => {
 			runRecovery(makeTestConfig(tempDir), db, rows, 'nothing to recover', reportEntries),
 		).resolves.toBeUndefined();
 
+		expect(reportEntries).toHaveLength(0);
+	});
+
+	it.runIf(caseInsensitiveTmp)('skips a candidate keyed by a case alias of its file', async () => {
+		const filePath = seedCorrupt('Track.flac');
+		fs.renameSync(filePath, path.join(tempDir, 'track.flac'));
+		const rows = getRecoveryCandidates(db);
+		const reportEntries: never[] = [];
+
+		await expect(
+			runRecovery(makeTestConfig(tempDir), db, rows, 'nothing to recover', reportEntries),
+		).resolves.toBeUndefined();
+
+		expect(rows.map((row) => row.current_path)).toEqual([filePath]);
 		expect(reportEntries).toHaveLength(0);
 	});
 });

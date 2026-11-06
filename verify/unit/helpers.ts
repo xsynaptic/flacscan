@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 
 import type { FlacScanConfig } from '#config/types.ts';
@@ -17,3 +19,6 @@ export function makeTestConfig(
 		...overrides,
 	};
 }
+
+export const caseInsensitiveTmp =
+	fs.existsSync(os.tmpdir().toUpperCase()) && fs.existsSync(os.tmpdir().toLowerCase());

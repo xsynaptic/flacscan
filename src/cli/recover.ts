@@ -18,7 +18,7 @@ import { sharedArguments } from '#cli/shared-arguments.ts';
 import { countRecoveryAttempted, getRecoveryCandidates } from '#database/queries.ts';
 import { checkMountedPaths } from '#discovery.ts';
 import { FlacScanError } from '#errors.ts';
-import { directoryPrefix } from '#paths.ts';
+import { directoryPrefix, existsAsSpelled } from '#paths.ts';
 import { findSpaceViolations, recoveredFilePath } from '#recovery.ts';
 import { ensureBinary } from '#shell.ts';
 
@@ -60,6 +60,7 @@ export const recoverCommand = defineCommand({
 		await runCommand(
 			args,
 			{
+				exclusive: true,
 				async prepare() {
 					await ensureBinary('flac');
 					await ensureBinary('metaflac', 'brew install flac');
@@ -91,7 +92,6 @@ export const recoverCommand = defineCommand({
 	},
 });
 
-// Disk-space preflight is all-or-nothing per volume; each volume stops once a write would breach its free buffer
 export async function runRecovery(
 	config: FlacScanConfig,
 	db: Database.Database,
@@ -110,7 +110,6 @@ export async function runRecovery(
 		return;
 	}
 
-	// Pass 1: stat every reachable source; skip ones already recovered or gone
 	const prepSpinner = ora({
 		discardStdin: false,
 		text: `Preparing: 0/${String(candidates.length)} files`,
@@ -130,11 +129,8 @@ export async function runRecovery(
 			alreadyPresent++;
 			continue;
 		}
-		let stat: fs.Stats;
-		try {
-			stat = fs.statSync(src);
-		} catch {
-			// Moved, deleted, or volume gone since the last scan; skip, never fail
+		const stat = statSpelledSource(src);
+		if (stat === undefined) {
 			unavailable++;
 			continue;
 		}
@@ -149,8 +145,6 @@ export async function runRecovery(
 		});
 	}
 
-	// Per-volume free space, grouped by device id
-	// A volume that vanished between stat and statfs drops out here rather than aborting
 	const volumes: { dev: number; freeBytes: number }[] = [];
 	const droppedDevs = new Set<number>();
 	const devs = new Set(items.map((item) => item.dev));
@@ -193,7 +187,6 @@ export async function runRecovery(
 		`Prepared ${String(plannedItems.length)} file(s) (${String(alreadyPresent)} already recovered, ${String(unavailable)} unavailable).`,
 	);
 
-	// Pass 2: re-encode; once a write would breach a volume's buffer, stop using that volume
 	const spinner = ora({
 		discardStdin: false,
 		text: `Recovering: 0/${String(plannedItems.length)} files`,
@@ -270,6 +263,15 @@ export async function runRecovery(
 		);
 	} else {
 		spinner.succeed(`Recovering complete: ${summary}`);
+	}
+}
+
+function statSpelledSource(src: string): fs.Stats | undefined {
+	if (!existsAsSpelled(src)) return undefined;
+	try {
+		return fs.statSync(src);
+	} catch {
+		return undefined;
 	}
 }
 

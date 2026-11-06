@@ -1,7 +1,6 @@
 import type Database from 'better-sqlite3';
 
 import chalk from 'chalk';
-import fs from 'node:fs';
 import ora from 'ora';
 
 import type { FlacScanConfig } from '#config/types.ts';
@@ -12,6 +11,7 @@ import { isShuttingDown, processPool } from '#cli/process-pool.ts';
 import { verifyAndRecord } from '#cli/verify-and-record.ts';
 import { deleteFileByPath, getFilesNeedingVerification } from '#database/queries.ts';
 import { logCorruption, logFixApplied, logFixDetected, logFixFailed } from '#logging/scan-log.ts';
+import { existsAsSpelled } from '#paths.ts';
 
 interface VerificationStats {
 	corrupt: number;
@@ -56,7 +56,7 @@ export async function runVerification(
 	let verified = 0;
 
 	await processPool(filesToVerify, config.parallelism, async (file) => {
-		if (!fs.existsSync(file.current_path)) {
+		if (!existsAsSpelled(file.current_path)) {
 			deleteFileByPath(db, file.current_path);
 			stats.pruned++;
 			spinner.clear();

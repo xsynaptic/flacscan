@@ -3,8 +3,6 @@ import type { FormatVerifier, VerificationResult } from '#verifiers/types.ts';
 import { execFile, extractStderr } from '#shell.ts';
 import { hasId3Tags, stripId3Tags } from '#verifiers/flac/fix-id3.ts';
 
-// The verifier only identifies failure; it captures stderr and the offset where decoding
-// first failed. Whether a corrupt file is salvageable is decided later by `recover`.
 async function verifyFile(filePath: string): Promise<VerificationResult> {
 	try {
 		await execFile('nice', ['-n', '19', 'flac', '-ts', filePath]);
