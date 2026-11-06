@@ -70,18 +70,6 @@
 				"reason": "Measured 18 on 2026-11-05; ratchet down when refactored",
 			},
 			{
-				"files": ["src/cli/scan-discover.ts"],
-				"functions": ["<arrow>"],
-				"maxCognitive": 22,
-				"reason": "Measured 20 on 2026-11-05; ratchet down when refactored",
-			},
-			{
-				"files": ["src/cli/scan.ts"],
-				"functions": ["<arrow>"],
-				"maxCognitive": 14,
-				"reason": "Measured 12 on 2026-11-05; ratchet down when refactored",
-			},
-			{
 				"files": ["src/cli/status.ts"],
 				"functions": ["<arrow>"],
 				"maxCognitive": 16,

@@ -41,10 +41,18 @@ const hasChangesets = readdirSync('.changeset').some(
 if (hasChangesets) exitWith('Pending changesets; run `pnpm changeset version` and commit first');
 
 const manifest = JSON.parse(readFileSync('package.json', 'utf8')) as PackageManifest;
-// A rerun after a failed push lands here; the pre-push hook gates it since nothing else has
 if (await isPublished(manifest)) {
-	console.log(`${manifest.name}@${manifest.version} is already on npm; pushing anything left over`);
-	run('git', ['push', '--follow-tags', 'origin', 'main']);
+	const tag = `v${manifest.version}`;
+	const isTagPushed =
+		spawnSync('git', ['merge-base', '--is-ancestor', tag, 'origin/main']).status === 0;
+
+	if (!isTagPushed) {
+		exitWith(
+			`${tag} is on npm but not on origin/main\nPush with \`git push --follow-tags origin main\``,
+		);
+	}
+
+	console.log(`Nothing to release; ${manifest.name}@${manifest.version} is already on npm`);
 	process.exit(0);
 }
 
