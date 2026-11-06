@@ -57,7 +57,7 @@ function rowNames(): string[] {
 async function acceptedCorrupt(name: string, contents: string, mtimeSeconds: number) {
 	const filePath = touch(name, contents);
 	fs.utimesSync(filePath, mtimeSeconds, mtimeSeconds);
-	await runDiscovery(db, listedFiles(), makeTestConfig(tempDir), [tempDir]);
+	await runDiscovery(db, makeTestConfig(tempDir), { files: listedFiles(), walked: [tempDir] });
 	updateVerificationResult(db, filePath, { error_output: name, last_result: 'corrupt' });
 	acknowledgeAllIssues(db);
 	return filePath;
@@ -74,7 +74,10 @@ describe('runDiscovery', () => {
 		const filePath = touch('new.flac');
 		const stat = fs.statSync(filePath);
 
-		const stats = await runDiscovery(db, [filePath], makeTestConfig(tempDir), [tempDir]);
+		const stats = await runDiscovery(db, makeTestConfig(tempDir), {
+			files: [filePath],
+			walked: [tempDir],
+		});
 
 		expect(stats).toEqual({ moved: 0, processed: 1, pruned: 0, skipped: 0, unreadable: 0 });
 		const row = findFileByPath(db, filePath);
@@ -87,10 +90,10 @@ describe('runDiscovery', () => {
 		const filePath = touch('same.flac');
 		const config = makeTestConfig(tempDir);
 
-		await runDiscovery(db, [filePath], config, [tempDir]);
+		await runDiscovery(db, config, { files: [filePath], walked: [tempDir] });
 		const firstUpdatedAt = findFileByPath(db, filePath)?.updated_at;
 
-		const stats = await runDiscovery(db, [filePath], config, [tempDir]);
+		const stats = await runDiscovery(db, config, { files: [filePath], walked: [tempDir] });
 
 		expect(stats.skipped).toBe(1);
 		expect(findFileByPath(db, filePath)?.updated_at).toBe(firstUpdatedAt);
@@ -109,7 +112,7 @@ describe('runDiscovery', () => {
 			result: 'recovered',
 		});
 
-		await runDiscovery(db, [filePath], makeTestConfig(tempDir), [tempDir]);
+		await runDiscovery(db, makeTestConfig(tempDir), { files: [filePath], walked: [tempDir] });
 
 		const row = findFileByPath(db, filePath);
 		expect(row?.last_result).toBe('pending');
@@ -123,7 +126,7 @@ describe('runDiscovery', () => {
 		const missing = path.join(tempDir, 'gone.flac');
 		const config = makeTestConfig(tempDir);
 
-		const stats = await runDiscovery(db, [missing], config, [tempDir]);
+		const stats = await runDiscovery(db, config, { files: [missing], walked: [tempDir] });
 
 		expect(stats.unreadable).toBe(0);
 		expect(findFileByPath(db, missing)).toBeUndefined();
@@ -137,7 +140,7 @@ describe('runDiscovery', () => {
 		const badPath = path.join(blocker, 'child.flac');
 		const config = makeTestConfig(tempDir);
 
-		const stats = await runDiscovery(db, [badPath], config, [tempDir]);
+		const stats = await runDiscovery(db, config, { files: [badPath], walked: [tempDir] });
 
 		expect(stats.unreadable).toBe(1);
 		expect(findUnreadableByPath(db, badPath)).toBeDefined();
@@ -153,7 +156,10 @@ describe('runDiscovery', () => {
 			filePath,
 		);
 
-		const stats = await runDiscovery(db, [filePath], makeTestConfig(tempDir), [tempDir]);
+		const stats = await runDiscovery(db, makeTestConfig(tempDir), {
+			files: [filePath],
+			walked: [tempDir],
+		});
 
 		expect(stats.skipped).toBe(0);
 		expect(findFileByPath(db, filePath)?.last_result).toBe('pending');
@@ -165,7 +171,7 @@ describe('runDiscovery move migration', () => {
 	it('migrates a renamed file, carrying its verdict and acknowledgement without re-verifying', async () => {
 		const oldPath = touch('old.flac');
 		const config = makeTestConfig(tempDir);
-		await runDiscovery(db, [oldPath], config, [tempDir]);
+		await runDiscovery(db, config, { files: [oldPath], walked: [tempDir] });
 		updateVerificationResult(db, oldPath, { error_output: 'boom', last_result: 'corrupt' });
 		acknowledgeAllIssues(db);
 		const before = findFileByPath(db, oldPath)!;
@@ -173,7 +179,7 @@ describe('runDiscovery move migration', () => {
 		const newPath = path.join(tempDir, 'renamed.flac');
 		fs.renameSync(oldPath, newPath);
 
-		const stats = await runDiscovery(db, [newPath], config, [tempDir]);
+		const stats = await runDiscovery(db, config, { files: [newPath], walked: [tempDir] });
 
 		expect(stats.moved).toBe(1);
 		expect(findFileByPath(db, oldPath)).toBeUndefined();
@@ -193,14 +199,17 @@ describe('runDiscovery move migration', () => {
 	it('treats a copy (original still present) as a new file, not a move', async () => {
 		const origPath = touch('orig.flac');
 		const config = makeTestConfig(tempDir);
-		await runDiscovery(db, [origPath], config, [tempDir]);
+		await runDiscovery(db, config, { files: [origPath], walked: [tempDir] });
 		const origStat = fs.statSync(origPath);
 
 		const copyPath = path.join(tempDir, 'copy.flac');
 		fs.writeFileSync(copyPath, 'data');
 		fs.utimesSync(copyPath, origStat.atime, origStat.mtime);
 
-		const stats = await runDiscovery(db, [origPath, copyPath], config, [tempDir]);
+		const stats = await runDiscovery(db, config, {
+			files: [origPath, copyPath],
+			walked: [tempDir],
+		});
 
 		expect(stats.moved).toBe(0);
 		expect(findFileByPath(db, origPath)).toBeDefined();
@@ -213,13 +222,13 @@ describe('runDiscovery move migration', () => {
 		const config = makeTestConfig(tempDir);
 		const mtime = fs.statSync(aPath).mtime;
 		fs.utimesSync(bPath, mtime, mtime);
-		await runDiscovery(db, [aPath, bPath], config, [tempDir]);
+		await runDiscovery(db, config, { files: [aPath, bPath], walked: [tempDir] });
 
 		const cPath = path.join(tempDir, 'c.flac');
 		fs.renameSync(aPath, cPath);
 		fs.rmSync(bPath);
 
-		const stats = await runDiscovery(db, [cPath], config, [tempDir]);
+		const stats = await runDiscovery(db, config, { files: [cPath], walked: [tempDir] });
 
 		expect(stats.moved).toBe(0);
 		expect(findFileByPath(db, cPath)?.last_result).toBe('pending');
@@ -233,7 +242,10 @@ describe('runDiscovery move migration', () => {
 		fs.renameSync(left, path.join(tempDir, 'swap.flac'));
 		fs.renameSync(right, left);
 		fs.renameSync(path.join(tempDir, 'swap.flac'), right);
-		const stats = await runDiscovery(db, listedFiles(), makeTestConfig(tempDir), [tempDir]);
+		const stats = await runDiscovery(db, makeTestConfig(tempDir), {
+			files: listedFiles(),
+			walked: [tempDir],
+		});
 
 		expect(stats.moved).toBe(2);
 		expect(findFileByPath(db, left)?.error_output).toBe('right.flac');
@@ -249,7 +261,10 @@ describe('runDiscovery move migration', () => {
 
 		fs.renameSync(second, third);
 		fs.renameSync(first, second);
-		const stats = await runDiscovery(db, listedFiles(), makeTestConfig(tempDir), [tempDir]);
+		const stats = await runDiscovery(db, makeTestConfig(tempDir), {
+			files: listedFiles(),
+			walked: [tempDir],
+		});
 
 		expect(stats.moved).toBe(2);
 		expect(rowNames()).toEqual(['2.flac', '3.flac']);
@@ -260,10 +275,13 @@ describe('runDiscovery move migration', () => {
 	it("replaces the row of a file renamed over, carrying the renamed file's row", async () => {
 		const kept = await acceptedCorrupt('kept.flac', 'aaaa', 1_700_000_001);
 		const overwritten = touch('overwritten.flac', 'bbbbb');
-		await runDiscovery(db, listedFiles(), makeTestConfig(tempDir), [tempDir]);
+		await runDiscovery(db, makeTestConfig(tempDir), { files: listedFiles(), walked: [tempDir] });
 
 		fs.renameSync(kept, overwritten);
-		const stats = await runDiscovery(db, listedFiles(), makeTestConfig(tempDir), [tempDir]);
+		const stats = await runDiscovery(db, makeTestConfig(tempDir), {
+			files: listedFiles(),
+			walked: [tempDir],
+		});
 
 		expect(stats.moved).toBe(1);
 		expect(rowNames()).toEqual(['overwritten.flac']);
@@ -278,7 +296,10 @@ describe('runDiscovery move migration', () => {
 		fs.utimesSync(copy, 1_700_000_001, 1_700_000_001);
 
 		fs.renameSync(original, path.join(tempDir, 'renamed.flac'));
-		const stats = await runDiscovery(db, listedFiles(), makeTestConfig(tempDir), [tempDir]);
+		const stats = await runDiscovery(db, makeTestConfig(tempDir), {
+			files: listedFiles(),
+			walked: [tempDir],
+		});
 
 		expect(stats.moved).toBe(0);
 		expect(rowNames()).toEqual(['copy.flac', 'renamed.flac']);
@@ -289,11 +310,14 @@ describe('runDiscovery move migration', () => {
 	it('prunes rows for files gone from a fully walked root, rows and unreadable rows alike', async () => {
 		const kept = touch('kept.flac');
 		const gone = touch('gone.flac');
-		await runDiscovery(db, [kept, gone], makeTestConfig(tempDir), [tempDir]);
+		await runDiscovery(db, makeTestConfig(tempDir), { files: [kept, gone], walked: [tempDir] });
 		upsertUnreadableFile(db, { current_path: path.join(tempDir, 'stuck.flac'), error_output: 'x' });
 		fs.rmSync(gone);
 
-		const stats = await runDiscovery(db, [kept], makeTestConfig(tempDir), [tempDir]);
+		const stats = await runDiscovery(db, makeTestConfig(tempDir), {
+			files: [kept],
+			walked: [tempDir],
+		});
 
 		expect(stats.pruned).toBe(2);
 		expect(rowNames()).toEqual(['kept.flac']);
@@ -303,7 +327,7 @@ describe('runDiscovery move migration', () => {
 	it('prunes nothing when discovery is interrupted at any point, then prunes once it completes', async () => {
 		const accepted = await acceptedCorrupt('accepted.flac', 'aaaa', 1_700_000_001);
 		const gone = touch('gone.flac');
-		await runDiscovery(db, listedFiles(), makeTestConfig(tempDir), [tempDir]);
+		await runDiscovery(db, makeTestConfig(tempDir), { files: listedFiles(), walked: [tempDir] });
 		fs.rmSync(gone);
 		fs.renameSync(accepted, path.join(tempDir, 'renamed.flac'));
 		touch('arrived.flac', 'bbbbb');
@@ -318,7 +342,10 @@ describe('runDiscovery move migration', () => {
 				remaining--;
 				return probe.interrupted;
 			});
-			const stats = await runDiscovery(db, listedFiles(), makeTestConfig(tempDir), [tempDir]);
+			const stats = await runDiscovery(db, makeTestConfig(tempDir), {
+				files: listedFiles(),
+				walked: [tempDir],
+			});
 			if (probe.interrupted) {
 				interruptions++;
 				expect(stats.pruned, `interrupted after ${String(checks)} checks`).toBe(0);
@@ -348,7 +375,10 @@ describe('runDiscovery move migration', () => {
 			fs.chmodSync(path.join(tempDir, 'locked'), 0o000);
 
 			try {
-				const stats = await runDiscovery(db, [original, copy], makeTestConfig(tempDir), [tempDir]);
+				const stats = await runDiscovery(db, makeTestConfig(tempDir), {
+					files: [original, copy],
+					walked: [tempDir],
+				});
 
 				expect(stats).toMatchObject({ moved: 0, pruned: 0, unreadable: 1 });
 				expect(findFileByPath(db, original)?.acknowledged_at).not.toBeNull();
@@ -365,18 +395,16 @@ describe('runDiscovery move migration', () => {
 			const kept = touch('kept.flac');
 			const gone = touch('gone.flac');
 			touch(path.join('locked', 'inside.flac'));
-			await runDiscovery(
-				db,
-				[kept, gone, path.join(tempDir, 'locked', 'inside.flac')],
-				makeTestConfig(tempDir),
-				[tempDir],
-			);
+			await runDiscovery(db, makeTestConfig(tempDir), {
+				files: [kept, gone, path.join(tempDir, 'locked', 'inside.flac')],
+				walked: [tempDir],
+			});
 			fs.rmSync(gone);
 			fs.chmodSync(path.join(tempDir, 'locked'), 0o000);
 
 			try {
 				const { files, incomplete, walked } = await discoverFiles([tempDir], ['.flac']);
-				const stats = await runDiscovery(db, files, makeTestConfig(tempDir), walked);
+				const stats = await runDiscovery(db, makeTestConfig(tempDir), { files, walked });
 
 				expect(incomplete.map((walk) => walk.directory)).toEqual([tempDir]);
 				expect(stats.pruned).toBe(0);
@@ -396,7 +424,10 @@ describe('runDiscovery move migration', () => {
 			file_size: stat.size,
 		});
 
-		const stats = await runDiscovery(db, [newPath], makeTestConfig(tempDir), [tempDir]);
+		const stats = await runDiscovery(db, makeTestConfig(tempDir), {
+			files: [newPath],
+			walked: [tempDir],
+		});
 
 		expect(stats.moved).toBe(0);
 		expect(findFileByPath(db, newPath)?.last_result).toBe('pending');

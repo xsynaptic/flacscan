@@ -80,10 +80,8 @@ describe('verifyAndRecord', () => {
 	it('marks a healthy file healthy and clears error columns', async () => {
 		const file = seed();
 		const outcome = await verifyAndRecord(
-			db,
-			makeVerifier({ verify: [{ status: 'healthy' }] }),
+			{ db, fix: false, verifier: makeVerifier({ verify: [{ status: 'healthy' }] }) },
 			file,
-			{ fix: false },
 		);
 
 		expect(outcome).toEqual({ kind: 'healthy' });
@@ -96,10 +94,8 @@ describe('verifyAndRecord', () => {
 	it('persists a corrupt verdict and refreshes metadata when empty', async () => {
 		const file = seed();
 		const outcome = await verifyAndRecord(
-			db,
-			makeVerifier({ verify: [corrupt('LOST_SYNC', 'sample 42')] }),
+			{ db, fix: false, verifier: makeVerifier({ verify: [corrupt('LOST_SYNC', 'sample 42')] }) },
 			file,
-			{ fix: false },
 		);
 
 		expect(outcome).toEqual({
@@ -118,9 +114,10 @@ describe('verifyAndRecord', () => {
 
 	it('skips the metadata refresh when the file already has tags', async () => {
 		const file = { ...seed(), artist: 'existing' };
-		await verifyAndRecord(db, makeVerifier({ verify: [corrupt('LOST_SYNC')] }), file, {
-			fix: false,
-		});
+		await verifyAndRecord(
+			{ db, fix: false, verifier: makeVerifier({ verify: [corrupt('LOST_SYNC')] }) },
+			file,
+		);
 
 		expect(extractMetadata).not.toHaveBeenCalled();
 		expect(findFileByPath(db, PATH)!.artist).toBeNull();
@@ -132,10 +129,12 @@ describe('verifyAndRecord', () => {
 		try {
 			const file = seed(tmp);
 			const outcome = await verifyAndRecord(
-				db,
-				makeVerifier({ detect: true, verify: [corrupt('ID3'), { status: 'healthy' }] }),
+				{
+					db,
+					fix: true,
+					verifier: makeVerifier({ detect: true, verify: [corrupt('ID3'), { status: 'healthy' }] }),
+				},
 				file,
-				{ fix: true },
 			);
 
 			expect(outcome).toEqual({ kind: 'fixed', label: 'ID3' });
@@ -147,13 +146,30 @@ describe('verifyAndRecord', () => {
 		}
 	});
 
+	it('returns interrupted without recording when the file vanishes after a fix', async () => {
+		const file = seed();
+		const outcome = await verifyAndRecord(
+			{
+				db,
+				fix: true,
+				verifier: makeVerifier({ detect: true, verify: [corrupt('ID3'), { status: 'healthy' }] }),
+			},
+			file,
+		);
+
+		expect(outcome).toEqual({ kind: 'interrupted' });
+		expect(findFileByPath(db, PATH)!.last_result).toBe('pending');
+	});
+
 	it('keeps the pre-fix error when a strip succeeds but the file is still corrupt', async () => {
 		const file = seed();
 		const outcome = await verifyAndRecord(
-			db,
-			makeVerifier({ detect: true, verify: [corrupt('before'), corrupt('after')] }),
+			{
+				db,
+				fix: true,
+				verifier: makeVerifier({ detect: true, verify: [corrupt('before'), corrupt('after')] }),
+			},
 			file,
-			{ fix: true },
 		);
 
 		expect(outcome).toEqual({
@@ -167,15 +183,17 @@ describe('verifyAndRecord', () => {
 	it('annotates a corrupt outcome when the fix command fails', async () => {
 		const file = seed();
 		const outcome = await verifyAndRecord(
-			db,
-			makeVerifier({
-				detect: true,
-				fixError: 'cannot strip',
-				fixOk: false,
-				verify: [corrupt('ID3')],
-			}),
+			{
+				db,
+				fix: true,
+				verifier: makeVerifier({
+					detect: true,
+					fixError: 'cannot strip',
+					fixOk: false,
+					verify: [corrupt('ID3')],
+				}),
+			},
 			file,
-			{ fix: true },
 		);
 
 		expect(outcome.kind).toBe('corrupt');
@@ -187,10 +205,8 @@ describe('verifyAndRecord', () => {
 	it('annotates a corrupt outcome as detected when fixing is off', async () => {
 		const file = seed();
 		const outcome = await verifyAndRecord(
-			db,
-			makeVerifier({ detect: true, verify: [corrupt('ID3')] }),
+			{ db, fix: false, verifier: makeVerifier({ detect: true, verify: [corrupt('ID3')] }) },
 			file,
-			{ fix: false },
 		);
 
 		expect(outcome.kind).toBe('corrupt');
@@ -207,7 +223,7 @@ describe('verifyAndRecord', () => {
 			verify: () => Promise.reject(new Error('flac exploded')),
 		};
 
-		await expect(verifyAndRecord(db, verifier, file, { fix: false })).rejects.toThrow(
+		await expect(verifyAndRecord({ db, fix: false, verifier }, file)).rejects.toThrow(
 			'flac exploded',
 		);
 		expect(findFileByPath(db, PATH)!.last_result).toBe('pending');
@@ -222,7 +238,7 @@ describe('verifyAndRecord', () => {
 			verify: () => Promise.reject(new Error('killed')),
 		};
 
-		const outcome = await verifyAndRecord(db, verifier, file, { fix: false });
+		const outcome = await verifyAndRecord({ db, fix: false, verifier }, file);
 
 		expect(outcome).toEqual({ kind: 'interrupted' });
 		expect(findFileByPath(db, PATH)!.last_result).toBe('pending');
@@ -231,10 +247,8 @@ describe('verifyAndRecord', () => {
 	it('returns interrupted without touching the database', async () => {
 		const file = seed();
 		const outcome = await verifyAndRecord(
-			db,
-			makeVerifier({ verify: [{ status: 'interrupted' }] }),
+			{ db, fix: false, verifier: makeVerifier({ verify: [{ status: 'interrupted' }] }) },
 			file,
-			{ fix: false },
 		);
 
 		expect(outcome).toEqual({ kind: 'interrupted' });

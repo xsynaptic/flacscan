@@ -1,4 +1,5 @@
 import type Database from 'better-sqlite3';
+import type { Ora } from 'ora';
 
 import chalk from 'chalk';
 import { defineCommand } from 'citty';
@@ -21,6 +22,28 @@ import { FlacScanError } from '#errors.ts';
 import { directoryPrefix, existsAsSpelled } from '#paths.ts';
 import { findSpaceViolations, recoveredFilePath } from '#recovery.ts';
 import { ensureBinary } from '#shell.ts';
+
+interface PreparedCounts {
+	alreadyPresent: number;
+	unavailable: number;
+}
+
+interface RecoveryRun {
+	config: FlacScanConfig;
+	entries: ReportEntry[];
+	spinner: Ora;
+	stoppedDevs: Set<number>;
+	tally: RecoveryTally;
+}
+
+interface RecoveryTally {
+	bufferStopped: number;
+	failed: number;
+	processed: number;
+	recovered: number;
+	skipped: number;
+	unavailable: number;
+}
 
 interface ReportEntry {
 	claimedSamples: number;
@@ -80,9 +103,11 @@ export const recoverCommand = defineCommand({
 					alreadyAttempted === 0
 						? 'No corrupt files to recover.'
 						: 'No un-attempted corrupt files to recover.';
-				const reportEntries: ReportEntry[] = [];
-
-				await runRecovery(config, db, rows, emptyMessage, reportEntries);
+				const reportEntries = await runRecovery(config, db, rows);
+				if (reportEntries === undefined) {
+					console.log(emptyMessage);
+					return;
+				}
 
 				if (args.output && reportEntries.length > 0) {
 					writeReport(args.output, reportEntries);
@@ -96,32 +121,103 @@ export async function runRecovery(
 	config: FlacScanConfig,
 	db: Database.Database,
 	rows: FileRow[],
-	emptyMessage: string,
-	reportEntries: ReportEntry[],
-): Promise<void> {
+): Promise<ReportEntry[] | undefined> {
 	const mountCheck = checkMountedPaths(config.directories);
 	const candidates = rows.filter((row) =>
 		mountCheck.available.some((directory) =>
 			row.current_path.startsWith(directoryPrefix(directory)),
 		),
 	);
-	if (candidates.length === 0) {
-		console.log(emptyMessage);
-		return;
-	}
+	if (candidates.length === 0) return undefined;
 
 	const prepSpinner = ora({
 		discardStdin: false,
 		text: `Preparing: 0/${String(candidates.length)} files`,
 	}).start();
 
+	const prepared = prepareItems(candidates, prepSpinner);
+	const { items, volumes } = await measureVolumes(prepared.items);
+	const counts: PreparedCounts = {
+		alreadyPresent: prepared.alreadyPresent,
+		unavailable: prepared.unavailable + prepared.items.length - items.length,
+	};
+
+	if (items.length === 0) {
+		prepSpinner.succeed(
+			`Nothing to do (${String(counts.alreadyPresent)} already recovered, ${String(counts.unavailable)} unavailable).`,
+		);
+		return [];
+	}
+
+	const violations = findSpaceViolations(items, volumes, config.min_free_bytes);
+	if (violations.length > 0) {
+		prepSpinner.fail('Not enough free space; nothing written.');
+		throw spaceError(violations);
+	}
+
+	prepSpinner.succeed(
+		`Prepared ${String(items.length)} file(s) (${String(counts.alreadyPresent)} already recovered, ${String(counts.unavailable)} unavailable).`,
+	);
+
+	return recoverAll({ config, db }, items, counts);
+}
+
+function finishRecovery({ spinner, tally }: RecoveryRun, total: number, counts: PreparedCounts) {
+	const totalUnavailable = counts.unavailable + tally.unavailable;
+	const summary = `${String(tally.recovered)} recovered, ${String(tally.skipped)} skipped (unsuitable), ${String(tally.failed)} failed, ${String(counts.alreadyPresent)} already recovered, ${String(totalUnavailable)} unavailable, ${String(tally.bufferStopped)} stopped (buffer floor)`;
+	if (isShuttingDown()) {
+		spinner.warn(
+			`Recovering interrupted at ${String(tally.processed)}/${String(total)}: ${summary}`,
+		);
+		return;
+	}
+	spinner.succeed(`Recovering complete: ${summary}`);
+}
+
+async function hasRoom({ config, spinner, stoppedDevs, tally }: RecoveryRun, item: RecoverItem) {
+	if (stoppedDevs.has(item.dev)) {
+		tally.bufferStopped++;
+		return false;
+	}
+	let fsStat;
+	try {
+		fsStat = await fs.promises.statfs(item.src);
+	} catch {
+		tally.unavailable++;
+		return false;
+	}
+	if (fsStat.bavail * fsStat.bsize - item.size >= config.min_free_bytes) return true;
+
+	stoppedDevs.add(item.dev);
+	tally.bufferStopped++;
+	spinner.clear();
+	console.log(chalk.yellow(`  buffer floor reached on volume ${String(item.dev)}; stopping there`));
+	return false;
+}
+
+async function measureVolumes(prepared: RecoverItem[]) {
+	const volumes: { dev: number; freeBytes: number }[] = [];
+	const droppedDevs = new Set<number>();
+	const devs = new Set(prepared.map((item) => item.dev));
+	for (const dev of devs) {
+		const sample = prepared.find((item) => item.dev === dev);
+		if (!sample) continue;
+		try {
+			const fsStat = await fs.promises.statfs(sample.src);
+			volumes.push({ dev, freeBytes: fsStat.bavail * fsStat.bsize });
+		} catch {
+			droppedDevs.add(dev);
+		}
+	}
+	return { items: prepared.filter((item) => !droppedDevs.has(item.dev)), volumes };
+}
+
+function prepareItems(candidates: FileRow[], spinner: Ora) {
 	const items: RecoverItem[] = [];
 	let alreadyPresent = 0;
 	let unavailable = 0;
-	let prepared = 0;
-	for (const row of candidates) {
-		prepared++;
-		prepSpinner.text = `Preparing: ${String(prepared)}/${String(candidates.length)} files`;
+	for (const [index, row] of candidates.entries()) {
+		spinner.text = `Preparing: ${String(index + 1)}/${String(candidates.length)} files`;
 
 		const src = row.current_path;
 		const dest = recoveredFilePath(src);
@@ -144,126 +240,82 @@ export async function runRecovery(
 			src,
 		});
 	}
+	return { alreadyPresent, items, unavailable };
+}
 
-	const volumes: { dev: number; freeBytes: number }[] = [];
-	const droppedDevs = new Set<number>();
-	const devs = new Set(items.map((item) => item.dev));
-	for (const dev of devs) {
-		const sample = items.find((item) => item.dev === dev);
-		if (!sample) continue;
-		try {
-			const fsStat = await fs.promises.statfs(sample.src);
-			volumes.push({ dev, freeBytes: fsStat.bavail * fsStat.bsize });
-		} catch {
-			droppedDevs.add(dev);
-		}
-	}
-
-	const plannedItems = items.filter((item) => !droppedDevs.has(item.dev));
-	unavailable += items.length - plannedItems.length;
-
-	if (plannedItems.length === 0) {
-		prepSpinner.succeed(
-			`Nothing to do (${String(alreadyPresent)} already recovered, ${String(unavailable)} unavailable).`,
-		);
-		return;
-	}
-
-	const violations = findSpaceViolations(plannedItems, volumes, config.min_free_bytes);
-	if (violations.length > 0) {
-		prepSpinner.fail('Not enough free space; nothing written.');
-		const detail = violations
-			.map(
-				(violation) =>
-					`  volume ${String(violation.dev)}: ${formatBytes(violation.freeBytes)} free, needs ${formatBytes(violation.requiredBytes)} (short ${formatBytes(violation.shortfallBytes)})`,
-			)
-			.join('\n');
-		throw new FlacScanError(
-			`Disk space check failed:\n${detail}\nFree up space or lower min_free_bytes, then retry.`,
-		);
-	}
-
-	prepSpinner.succeed(
-		`Prepared ${String(plannedItems.length)} file(s) (${String(alreadyPresent)} already recovered, ${String(unavailable)} unavailable).`,
-	);
-
-	const spinner = ora({
-		discardStdin: false,
-		text: `Recovering: 0/${String(plannedItems.length)} files`,
-	}).start();
-
-	const stoppedDevs = new Set<number>();
-	let recovered = 0;
-	let skipped = 0;
-	let failed = 0;
-	let bufferStopped = 0;
-	let runUnavailable = 0;
-	let processed = 0;
-
-	const pushEntry = (item: RecoverItem, result: AttemptResult, outcome: ReportEntry['outcome']) => {
-		reportEntries.push({
-			claimedSamples: result.claimedSamples,
-			deliveredSamples: result.deliveredSamples,
-			detail: result.detail,
-			lostSamples: result.lostSamples,
-			outcome,
-			sampleRate: result.sampleRate,
-			src: item.src,
-		});
+async function recoverAll(
+	{ config, db }: { config: FlacScanConfig; db: Database.Database },
+	items: RecoverItem[],
+	counts: PreparedCounts,
+): Promise<ReportEntry[]> {
+	const run: RecoveryRun = {
+		config,
+		entries: [],
+		spinner: ora({
+			discardStdin: false,
+			text: `Recovering: 0/${String(items.length)} files`,
+		}).start(),
+		stoppedDevs: new Set(),
+		tally: { bufferStopped: 0, failed: 0, processed: 0, recovered: 0, skipped: 0, unavailable: 0 },
 	};
 
-	await processPool(plannedItems, config.parallelism, async (item) => {
-		processed++;
-		spinner.text = `Recovering: ${String(processed)}/${String(plannedItems.length)} files`;
+	await processPool(items, config.parallelism, async (item) => {
+		run.tally.processed++;
+		run.spinner.text = `Recovering: ${String(run.tally.processed)}/${String(items.length)} files`;
+		if (!(await hasRoom(run, item))) return;
 
-		if (stoppedDevs.has(item.dev)) {
-			bufferStopped++;
-			return;
-		}
-		let fsStat;
-		try {
-			fsStat = await fs.promises.statfs(item.src);
-		} catch {
-			runUnavailable++;
-			return;
-		}
-		if (fsStat.bavail * fsStat.bsize - item.size < config.min_free_bytes) {
-			stoppedDevs.add(item.dev);
-			bufferStopped++;
-			spinner.clear();
-			console.log(
-				chalk.yellow(`  buffer floor reached on volume ${String(item.dev)}; stopping there`),
-			);
-			return;
-		}
-
-		const result = await attemptRecovery(flacEngine, db, config, item);
-		spinner.clear();
-		if (result.kind === 'recovered') {
-			pushEntry(item, result, 'recovered');
-			recovered++;
-			if (result.warning) console.log(chalk.yellow(`  WARNING ${result.warning}`));
-			console.log(chalk.green(`  RECOVERED ${item.dest}`) + chalk.dim(` ${result.note ?? ''}`));
-		} else if (result.kind === 'unsuitable') {
-			pushEntry(item, result, 'unsuitable');
-			skipped++;
-			console.log(chalk.yellow(`  SKIPPED ${item.src}`) + chalk.dim(` - ${result.detail ?? ''}`));
-		} else {
-			failed++;
-			if (result.kind === 'failed') pushEntry(item, result, 'failed');
-			console.log(chalk.red(`  FAILED ${item.src}`) + chalk.dim(` - ${result.detail ?? ''}`));
-		}
+		const result = await attemptRecovery({ config, db, env: flacEngine }, item);
+		reportAttempt(run, item, result);
 	});
 
-	const totalUnavailable = unavailable + runUnavailable;
-	const summary = `${String(recovered)} recovered, ${String(skipped)} skipped (unsuitable), ${String(failed)} failed, ${String(alreadyPresent)} already recovered, ${String(totalUnavailable)} unavailable, ${String(bufferStopped)} stopped (buffer floor)`;
-	if (isShuttingDown()) {
-		spinner.warn(
-			`Recovering interrupted at ${String(processed)}/${String(plannedItems.length)}: ${summary}`,
-		);
-	} else {
-		spinner.succeed(`Recovering complete: ${summary}`);
+	finishRecovery(run, items.length, counts);
+	return run.entries;
+}
+
+function reportAttempt(
+	{ entries, spinner, tally }: RecoveryRun,
+	item: RecoverItem,
+	result: AttemptResult,
+) {
+	const entry = (outcome: ReportEntry['outcome']): ReportEntry => ({
+		claimedSamples: result.claimedSamples,
+		deliveredSamples: result.deliveredSamples,
+		detail: result.detail,
+		lostSamples: result.lostSamples,
+		outcome,
+		sampleRate: result.sampleRate,
+		src: item.src,
+	});
+
+	spinner.clear();
+	if (result.kind === 'recovered') {
+		entries.push(entry('recovered'));
+		tally.recovered++;
+		if (result.warning) console.log(chalk.yellow(`  WARNING ${result.warning}`));
+		console.log(chalk.green(`  RECOVERED ${item.dest}`) + chalk.dim(` ${result.note ?? ''}`));
+		return;
 	}
+	if (result.kind === 'unsuitable') {
+		entries.push(entry('unsuitable'));
+		tally.skipped++;
+		console.log(chalk.yellow(`  SKIPPED ${item.src}`) + chalk.dim(` - ${result.detail ?? ''}`));
+		return;
+	}
+	tally.failed++;
+	if (result.kind === 'failed') entries.push(entry('failed'));
+	console.log(chalk.red(`  FAILED ${item.src}`) + chalk.dim(` - ${result.detail ?? ''}`));
+}
+
+function spaceError(violations: ReturnType<typeof findSpaceViolations>): FlacScanError {
+	const detail = violations
+		.map(
+			(violation) =>
+				`  volume ${String(violation.dev)}: ${formatBytes(violation.freeBytes)} free, needs ${formatBytes(violation.requiredBytes)} (short ${formatBytes(violation.shortfallBytes)})`,
+		)
+		.join('\n');
+	return new FlacScanError(
+		`Disk space check failed:\n${detail}\nFree up space or lower min_free_bytes, then retry.`,
+	);
 }
 
 function statSpelledSource(src: string): fs.Stats | undefined {

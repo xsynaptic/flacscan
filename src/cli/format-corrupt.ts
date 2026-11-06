@@ -5,13 +5,12 @@ const ERROR_CODE_PATTERN = /error code \d+:(\S+)/;
 export function printCorruptFile(
 	spinner: { clear(): void },
 	filePath: string,
-	result: { errorOutput: string; errorTimestamp: null | string },
-	opts: { known: boolean },
+	result: { errorOutput: string; errorTimestamp: null | string; known: boolean },
 ): void {
 	const firstError = extractFirstError(result.errorOutput);
 	const location = result.errorTimestamp ? ` (${result.errorTimestamp})` : '';
 	spinner.clear();
-	if (opts.known) {
+	if (result.known) {
 		console.log(chalk.dim(`  CORRUPT (accepted) ${filePath}`));
 	} else {
 		console.log(chalk.red(`  NEW CORRUPT ${filePath}`));

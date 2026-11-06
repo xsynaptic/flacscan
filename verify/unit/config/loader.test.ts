@@ -169,6 +169,55 @@ describe('loadConfig', () => {
 		);
 	});
 
+	it.each([
+		['directories:\n  - /m\n  - 7', 'directories', 'a list of strings'],
+		['directories:\n  - /m\nmin_free_bytes: 1.5', 'min_free_bytes', 'a positive integer'],
+		[
+			'directories:\n  - /m\nrecover_max_trailing_loss_seconds: 0',
+			'recover_max_trailing_loss_seconds',
+			'a positive number',
+		],
+		['directories:\n  - /m\nnotify: 1', 'notify', 'true or false'],
+		['directories:\n  - /m\nlog_path: 3', 'log_path', 'a string'],
+		['directories:\n  - /m\nparallelism: ~', 'parallelism', 'a positive integer'],
+	])('rejects an invalid %s with its expectation', (yaml, key, expected) => {
+		const config = writeConfig(tempDir, yaml);
+
+		expect(() => loadConfig({ config })).toThrow(
+			`Invalid value for ${key} in ${config} (must be ${expected})`,
+		);
+	});
+
+	it('reports the first invalid key in validation order', () => {
+		const config = writeConfig(tempDir, 'directories: 5\nbatch_size: 0\nfix: 2');
+
+		expect(() => loadConfig({ config })).toThrow(/for directories in/);
+	});
+
+	it('accepts a fractional trailing-loss limit from the file and the CLI', () => {
+		const config = writeConfig(
+			tempDir,
+			'directories:\n  - /m\nrecover_max_trailing_loss_seconds: 1.5',
+		);
+
+		expect(loadConfig({ config }).recover_max_trailing_loss_seconds).toBe(1.5);
+		expect(
+			loadConfig({ config, 'max-trailing-loss': '0.5' }).recover_max_trailing_loss_seconds,
+		).toBe(0.5);
+	});
+
+	it.each([
+		[{ 'batch-size': '2.5' }, 'Invalid value for batch-size: "2.5" (must be a positive integer)'],
+		[
+			{ 'max-trailing-loss': '-1' },
+			'Invalid value for max-trailing-loss: "-1" (must be a positive number)',
+		],
+	])('rejects an invalid CLI value %o', (cliArgs, message) => {
+		const config = writeConfig(tempDir, 'directories:\n  - /m');
+
+		expect(() => loadConfig({ config, ...cliArgs })).toThrow(message);
+	});
+
 	it('lets CLI numeric overrides beat file values', () => {
 		const config = writeConfig(tempDir, 'directories:\n  - /m\nbatch_size: 50');
 

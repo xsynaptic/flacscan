@@ -1,5 +1,3 @@
-import type { Linter } from 'eslint';
-
 import eslintComments from '@eslint-community/eslint-plugin-eslint-comments';
 import eslint from '@eslint/js';
 import perfectionist from 'eslint-plugin-perfectionist';
@@ -15,67 +13,6 @@ const gitignored = includeIgnoreFile(path.join(import.meta.dirname, '.gitignore'
 const browserOnlyGlobals = Object.keys(globals.browser)
 	.filter((name) => !Object.hasOwn(globals.nodeBuiltin, name))
 	.map((name) => ({ message: 'flacscan runs in Node only.', name }));
-
-interface Ceilings {
-	complexity?: number;
-	'max-depth'?: number;
-	'max-lines-per-function'?: number;
-	'max-params'?: number;
-	'max-statements'?: number;
-}
-
-// Each file's measured worst on 2026-11-05; a ceiling only ever moves down as its file is refactored
-const legacyCeilings: Record<string, Ceilings> = {
-	'src/cli/format-corrupt.ts': { 'max-params': 4 },
-	'src/cli/recheck.ts': { complexity: 9 },
-	'src/cli/recover-attempt.ts': {
-		complexity: 19,
-		'max-lines-per-function': 142,
-		'max-params': 4,
-		'max-statements': 45,
-	},
-	'src/cli/recover.ts': {
-		complexity: 11,
-		'max-lines-per-function': 160,
-		'max-params': 5,
-		'max-statements': 60,
-	},
-	'src/cli/report.ts': { complexity: 10 },
-	'src/cli/scan-discover.ts': { complexity: 12, 'max-params': 5, 'max-statements': 38 },
-	'src/cli/scan-verify.ts': { complexity: 10, 'max-params': 4, 'max-statements': 35 },
-	'src/cli/scan.ts': { complexity: 18 },
-	'src/cli/status.ts': { complexity: 12, 'max-statements': 26 },
-	'src/cli/verify-and-record.ts': {
-		complexity: 19,
-		'max-depth': 4,
-		'max-params': 4,
-		'max-statements': 32,
-	},
-	'src/config/loader.ts': { complexity: 27, 'max-statements': 47 },
-	'src/database/queries.ts': { 'max-params': 4 },
-	'src/logging/scan-log.ts': { 'max-params': 4 },
-	'src/metadata.ts': { complexity: 9 },
-	'src/verifiers/flac/verify.ts': { complexity: 11 },
-	'verify/unit/database/queries.test.ts': { complexity: 11 },
-};
-
-function ceilingRules(ceilings: Ceilings) {
-	const rules: Linter.RulesRecord = {};
-	if (ceilings.complexity !== undefined) {
-		rules.complexity = ['warn', { max: ceilings.complexity, variant: 'modified' }];
-	}
-	if (ceilings['max-lines-per-function'] !== undefined) {
-		rules['max-lines-per-function'] = [
-			'warn',
-			{ max: ceilings['max-lines-per-function'], skipBlankLines: true, skipComments: true },
-		];
-	}
-	for (const rule of ['max-depth', 'max-params', 'max-statements'] as const) {
-		const max = ceilings[rule];
-		if (max !== undefined) rules[rule] = ['warn', max];
-	}
-	return rules;
-}
 
 export default defineConfig(
 	gitignored,
@@ -151,10 +88,6 @@ export default defineConfig(
 			'max-statements': 'off',
 		},
 	},
-	...Object.entries(legacyCeilings).map(([file, ceilings]) => ({
-		files: [file],
-		rules: ceilingRules(ceilings),
-	})),
 	{
 		// `no-undef` cannot guard this side; it misreads type namespaces such as `NodeJS`
 		files: ['**/*.ts'],

@@ -141,7 +141,7 @@ describe('attemptRecovery under generated failures', () => {
 			initializeSchema(db);
 			const { env, files, killedStepSeen, touchedPaths } = makeFakeEnv(plan);
 
-			const result = await attemptRecovery(env, db, config, seedCorruptRow(db));
+			const result = await attemptRecovery({ config, db, env }, seedCorruptRow(db));
 			const stored = findFileByPath(db, src)!.recovery_result;
 			db.close();
 
@@ -169,7 +169,7 @@ describe('attemptRecovery under generated failures', () => {
 			initializeSchema(db);
 			const { env, touchedPaths } = makeFakeEnv(plan);
 
-			const result = await attemptRecovery(env, db, config, seedCorruptRow(db));
+			const result = await attemptRecovery({ config, db, env }, seedCorruptRow(db));
 			const stored = findFileByPath(db, src)!.recovery_result;
 			db.close();
 
@@ -186,7 +186,7 @@ describe('attemptRecovery under generated failures', () => {
 			const db = new BetterSqlite3(':memory:');
 			initializeSchema(db);
 			const { env } = makeFakeEnv(plan);
-			const result = await attemptRecovery(env, db, config, seedCorruptRow(db));
+			const result = await attemptRecovery({ config, db, env }, seedCorruptRow(db));
 			db.close();
 			reachedKinds.add(result.kind);
 		}

@@ -73,9 +73,7 @@ describe('attemptRecovery', () => {
 	it('does not start or record a verdict when shutting down', async () => {
 		const item = seed();
 		const result = await attemptRecovery(
-			makeEnv({ shouldStop: () => true }),
-			db,
-			DEFAULT_CONFIG,
+			{ config: DEFAULT_CONFIG, db, env: makeEnv({ shouldStop: () => true }) },
 			item,
 		);
 
@@ -86,9 +84,11 @@ describe('attemptRecovery', () => {
 	it('treats a vanished source as failed without recording a verdict', async () => {
 		const item = seed();
 		const result = await attemptRecovery(
-			makeEnv({ exists: () => false, probe: () => Promise.reject(new Error('gone')) }),
-			db,
-			DEFAULT_CONFIG,
+			{
+				config: DEFAULT_CONFIG,
+				db,
+				env: makeEnv({ exists: () => false, probe: () => Promise.reject(new Error('gone')) }),
+			},
 			item,
 		);
 
@@ -100,9 +100,11 @@ describe('attemptRecovery', () => {
 	it('records unsuitable when metaflac cannot read a present file', async () => {
 		const item = seed();
 		const result = await attemptRecovery(
-			makeEnv({ probe: () => Promise.reject(new Error('bad header')) }),
-			db,
-			DEFAULT_CONFIG,
+			{
+				config: DEFAULT_CONFIG,
+				db,
+				env: makeEnv({ probe: () => Promise.reject(new Error('bad header')) }),
+			},
 			item,
 		);
 
@@ -114,9 +116,7 @@ describe('attemptRecovery', () => {
 	it('records unsuitable when the stream claims zero samples', async () => {
 		const item = seed();
 		const result = await attemptRecovery(
-			makeEnv({ probe: () => Promise.resolve(fmt(0)) }),
-			db,
-			DEFAULT_CONFIG,
+			{ config: DEFAULT_CONFIG, db, env: makeEnv({ probe: () => Promise.resolve(fmt(0)) }) },
 			item,
 		);
 
@@ -129,13 +129,15 @@ describe('attemptRecovery', () => {
 		const item = seed();
 		const unlink = vi.fn(() => Promise.resolve());
 		const result = await attemptRecovery(
-			makeEnv({
-				decodeReencode: () => Promise.reject(new Error('boom')),
-				probe: probeBy(1000, 1000),
-				unlink,
-			}),
-			db,
-			DEFAULT_CONFIG,
+			{
+				config: DEFAULT_CONFIG,
+				db,
+				env: makeEnv({
+					decodeReencode: () => Promise.reject(new Error('boom')),
+					probe: probeBy(1000, 1000),
+					unlink,
+				}),
+			},
 			item,
 		);
 
@@ -149,14 +151,16 @@ describe('attemptRecovery', () => {
 		const item = seed();
 		const unlink = vi.fn(() => Promise.resolve());
 		const result = await attemptRecovery(
-			makeEnv({
-				decodeReencode: () => Promise.reject(new Error('boom')),
-				exists: () => false,
-				probe: probeBy(1000, 1000),
-				unlink,
-			}),
-			db,
-			DEFAULT_CONFIG,
+			{
+				config: DEFAULT_CONFIG,
+				db,
+				env: makeEnv({
+					decodeReencode: () => Promise.reject(new Error('boom')),
+					exists: () => false,
+					probe: probeBy(1000, 1000),
+					unlink,
+				}),
+			},
 			item,
 		);
 
@@ -172,14 +176,16 @@ describe('attemptRecovery', () => {
 		// False at the pre-flight guard, true at the post-testPasses check
 		shouldStop.mockReturnValueOnce(false).mockReturnValue(true);
 		const result = await attemptRecovery(
-			makeEnv({
-				probe: probeBy(1000, 900),
-				shouldStop,
-				testPasses: () => Promise.resolve(false),
-				unlink,
-			}),
-			db,
-			DEFAULT_CONFIG,
+			{
+				config: DEFAULT_CONFIG,
+				db,
+				env: makeEnv({
+					probe: probeBy(1000, 900),
+					shouldStop,
+					testPasses: () => Promise.resolve(false),
+					unlink,
+				}),
+			},
 			item,
 		);
 
@@ -193,9 +199,7 @@ describe('attemptRecovery', () => {
 		const item = seed();
 		const unlink = vi.fn(() => Promise.resolve());
 		const result = await attemptRecovery(
-			makeEnv({ probe: probeBy(200_000, 10_000), unlink }),
-			db,
-			DEFAULT_CONFIG,
+			{ config: DEFAULT_CONFIG, db, env: makeEnv({ probe: probeBy(200_000, 10_000), unlink }) },
 			item,
 		);
 
@@ -210,9 +214,7 @@ describe('attemptRecovery', () => {
 		const item = seed();
 		const utimes = vi.fn(() => Promise.resolve());
 		const result = await attemptRecovery(
-			makeEnv({ probe: probeBy(1000, 900), utimes }),
-			db,
-			DEFAULT_CONFIG,
+			{ config: DEFAULT_CONFIG, db, env: makeEnv({ probe: probeBy(1000, 900), utimes }) },
 			item,
 		);
 
@@ -228,12 +230,14 @@ describe('attemptRecovery', () => {
 	it('recovers with a warning when metadata cannot be carried over', async () => {
 		const item = seed();
 		const result = await attemptRecovery(
-			makeEnv({
-				carryMetadata: () => Promise.reject(new Error('tag blob')),
-				probe: probeBy(1000, 900),
-			}),
-			db,
-			DEFAULT_CONFIG,
+			{
+				config: DEFAULT_CONFIG,
+				db,
+				env: makeEnv({
+					carryMetadata: () => Promise.reject(new Error('tag blob')),
+					probe: probeBy(1000, 900),
+				}),
+			},
 			item,
 		);
 
@@ -246,13 +250,15 @@ describe('attemptRecovery', () => {
 		const item = seed();
 		const unlink = vi.fn(() => Promise.resolve());
 		const result = await attemptRecovery(
-			makeEnv({
-				probe: probeBy(1000, 900),
-				rename: () => Promise.reject(new Error('nope')),
-				unlink,
-			}),
-			db,
-			DEFAULT_CONFIG,
+			{
+				config: DEFAULT_CONFIG,
+				db,
+				env: makeEnv({
+					probe: probeBy(1000, 900),
+					rename: () => Promise.reject(new Error('nope')),
+					unlink,
+				}),
+			},
 			item,
 		);
 

@@ -54,19 +54,21 @@ function insertFile(overrides: {
 	db.prepare(
 		`INSERT INTO files (current_path, last_result, last_verified_at, acknowledged_at,
 		error_severity, error_output, file_size, file_mtime, first_seen_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-	).run(
-		overrides.current_path ?? '/music/test.flac',
-		overrides.last_result ?? 'pending',
-		overrides.last_verified_at ?? null,
-		overrides.acknowledged_at ?? null,
-		overrides.error_severity ?? null,
-		overrides.error_output ?? null,
-		overrides.file_size ?? null,
-		overrides.file_mtime ?? null,
-		overrides.first_seen_at ?? now,
-		overrides.updated_at ?? now,
-	);
+		VALUES (@current_path, @last_result, @last_verified_at, @acknowledged_at, @error_severity,
+		@error_output, @file_size, @file_mtime, @first_seen_at, @updated_at)`,
+	).run({
+		acknowledged_at: null,
+		current_path: '/music/test.flac',
+		error_output: null,
+		error_severity: null,
+		file_mtime: null,
+		file_size: null,
+		first_seen_at: now,
+		last_result: 'pending',
+		last_verified_at: null,
+		updated_at: now,
+		...overrides,
+	});
 }
 
 describe('getStats', () => {
@@ -266,13 +268,19 @@ describe('schema migration', () => {
 describe('getFilesNeedingVerification', () => {
 	it('returns empty array for empty directories', () => {
 		insertFile({ current_path: '/music/test.flac' });
-		const result = getFilesNeedingVerification(db, 30, 100, []);
+		const result = getFilesNeedingVerification(db, [], {
+			batch_size: 100,
+			rescan_interval_days: 30,
+		});
 		expect(result).toEqual([]);
 	});
 
 	it('returns pending files in specified directories', () => {
 		insertFile({ current_path: '/music/album/track.flac', last_result: 'pending' });
-		const result = getFilesNeedingVerification(db, 30, 100, ['/music/']);
+		const result = getFilesNeedingVerification(db, ['/music/'], {
+			batch_size: 100,
+			rescan_interval_days: 30,
+		});
 		expect(result).toHaveLength(1);
 		expect(result[0]!.current_path).toBe('/music/album/track.flac');
 	});
@@ -284,7 +292,10 @@ describe('getFilesNeedingVerification', () => {
 			last_result: 'healthy',
 			last_verified_at: old,
 		});
-		const result = getFilesNeedingVerification(db, 30, 100, ['/music/']);
+		const result = getFilesNeedingVerification(db, ['/music/'], {
+			batch_size: 100,
+			rescan_interval_days: 30,
+		});
 		expect(result).toHaveLength(1);
 	});
 
@@ -295,13 +306,19 @@ describe('getFilesNeedingVerification', () => {
 			last_result: 'healthy',
 			last_verified_at: recent,
 		});
-		const result = getFilesNeedingVerification(db, 30, 100, ['/music/']);
+		const result = getFilesNeedingVerification(db, ['/music/'], {
+			batch_size: 100,
+			rescan_interval_days: 30,
+		});
 		expect(result).toHaveLength(0);
 	});
 
 	it('skips files outside specified directories', () => {
 		insertFile({ current_path: '/other/track.flac', last_result: 'pending' });
-		const result = getFilesNeedingVerification(db, 30, 100, ['/music/']);
+		const result = getFilesNeedingVerification(db, ['/music/'], {
+			batch_size: 100,
+			rescan_interval_days: 30,
+		});
 		expect(result).toHaveLength(0);
 	});
 
@@ -309,7 +326,10 @@ describe('getFilesNeedingVerification', () => {
 		insertFile({ current_path: '/music/1.flac', last_result: 'pending' });
 		insertFile({ current_path: '/music/2.flac', last_result: 'pending' });
 		insertFile({ current_path: '/music/3.flac', last_result: 'pending' });
-		const result = getFilesNeedingVerification(db, 30, 2, ['/music/']);
+		const result = getFilesNeedingVerification(db, ['/music/'], {
+			batch_size: 2,
+			rescan_interval_days: 30,
+		});
 		expect(result).toHaveLength(2);
 	});
 
@@ -332,7 +352,10 @@ describe('getFilesNeedingVerification', () => {
 			last_verified_at: older,
 		});
 
-		const result = getFilesNeedingVerification(db, 30, 100, ['/music/']);
+		const result = getFilesNeedingVerification(db, ['/music/'], {
+			batch_size: 100,
+			rescan_interval_days: 30,
+		});
 		expect(result[0]!.current_path).toBe('/music/null.flac');
 		expect(result[1]!.current_path).toBe('/music/older.flac');
 		expect(result[2]!.current_path).toBe('/music/old.flac');
@@ -342,7 +365,10 @@ describe('getFilesNeedingVerification', () => {
 		insertFile({ current_path: '/music/100%_done/track.flac', last_result: 'pending' });
 		insertFile({ current_path: '/music/100X_done/other.flac', last_result: 'pending' });
 
-		const result = getFilesNeedingVerification(db, 30, 100, ['/music/100%_done/']);
+		const result = getFilesNeedingVerification(db, ['/music/100%_done/'], {
+			batch_size: 100,
+			rescan_interval_days: 30,
+		});
 		expect(result).toHaveLength(1);
 		expect(result[0]!.current_path).toBe('/music/100%_done/track.flac');
 	});
@@ -350,9 +376,14 @@ describe('getFilesNeedingVerification', () => {
 	it('does not match a sibling directory that shares a name prefix', () => {
 		insertFile({ current_path: '/music-other/x.flac', last_result: 'pending' });
 
-		expect(getFilesNeedingVerification(db, 90, 10, ['/music'])).toHaveLength(0);
+		expect(
+			getFilesNeedingVerification(db, ['/music'], { batch_size: 10, rescan_interval_days: 90 }),
+		).toHaveLength(0);
 
-		const scoped = getFilesNeedingVerification(db, 90, 10, ['/music-other']);
+		const scoped = getFilesNeedingVerification(db, ['/music-other'], {
+			batch_size: 10,
+			rescan_interval_days: 90,
+		});
 		expect(scoped).toHaveLength(1);
 		expect(scoped[0]!.current_path).toBe('/music-other/x.flac');
 	});

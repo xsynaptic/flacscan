@@ -71,9 +71,10 @@ describe('getFilesNeedingVerification', () => {
 		([rows, roots]) => {
 			const db = seed(rows);
 			const all = db.prepare(`SELECT current_path FROM files`).all() as { current_path: string }[];
-			const selected = getFilesNeedingVerification(db, 0, 1000, roots).map(
-				(row) => row.current_path,
-			);
+			const selected = getFilesNeedingVerification(db, roots, {
+				batch_size: 1000,
+				rescan_interval_days: 0,
+			}).map((row) => row.current_path);
 			db.close();
 
 			const expected = all
@@ -97,7 +98,10 @@ describe('getFilesNeedingVerification', () => {
 				last_result: FileStatus;
 				last_verified_at: null | string;
 			}[];
-			const batch = getFilesNeedingVerification(db, 90, batchSize, [root]);
+			const batch = getFilesNeedingVerification(db, [root], {
+				batch_size: batchSize,
+				rescan_interval_days: 90,
+			});
 			db.close();
 
 			const cutoff = Date.now() - 90 * day;
@@ -129,9 +133,10 @@ describe('getFilesNeedingVerification', () => {
 
 	it('leaves out a row under a root spelled in a different case', () => {
 		const db = seed([{ currentPath: '/a/a', lastResult: 'pending', lastVerifiedAt: null }]);
-		const selected = getFilesNeedingVerification(db, 0, 1000, ['/A']).map(
-			(row) => row.current_path,
-		);
+		const selected = getFilesNeedingVerification(db, ['/A'], {
+			batch_size: 1000,
+			rescan_interval_days: 0,
+		}).map((row) => row.current_path);
 		db.close();
 
 		expect(selected).toEqual([]);
@@ -143,7 +148,10 @@ describe('getFilesNeedingVerification', () => {
 		const samples = fc.sample(rowsAndRoots, { numRuns: 500, seed: 1 });
 		for (const [rows, roots] of samples) {
 			const db = seed(rows);
-			const selected = getFilesNeedingVerification(db, 0, 1000, roots).length;
+			const selected = getFilesNeedingVerification(db, roots, {
+				batch_size: 1000,
+				rescan_interval_days: 0,
+			}).length;
 			const total = (db.prepare(`SELECT COUNT(*) AS count FROM files`).get() as { count: number })
 				.count;
 			db.close();

@@ -31,7 +31,7 @@ describe('scan-log', () => {
 	it('writes one parseable corruption line', () => {
 		const logPath = uniqueLogPath('a.log');
 
-		logCorruption(logPath, '/music/bad.flac', 'decode error', false);
+		logCorruption(logPath, '/music/bad.flac', { details: 'decode error', known: false });
 
 		const lines = readLines(logPath);
 		expect(lines).toHaveLength(1);
@@ -50,8 +50,8 @@ describe('scan-log', () => {
 	it('appends a separate line per call', () => {
 		const logPath = uniqueLogPath('b.log');
 
-		logCorruption(logPath, '/music/one.flac', 'first', false);
-		logCorruption(logPath, '/music/two.flac', 'second', true);
+		logCorruption(logPath, '/music/one.flac', { details: 'first', known: false });
+		logCorruption(logPath, '/music/two.flac', { details: 'second', known: true });
 
 		const lines = readLines(logPath);
 		expect(lines).toHaveLength(2);
@@ -62,7 +62,7 @@ describe('scan-log', () => {
 	it('creates the parent directory when missing', () => {
 		const logPath = uniqueLogPath('nested', 'deeper', 'c.log');
 
-		logCorruption(logPath, '/music/x.flac', 'boom', false);
+		logCorruption(logPath, '/music/x.flac', { details: 'boom', known: false });
 
 		expect(fs.existsSync(logPath)).toBe(true);
 	});
@@ -84,7 +84,7 @@ describe('scan-log', () => {
 	it('round-trips scan start and complete payloads', () => {
 		const logPath = uniqueLogPath('d.log');
 
-		logScanStart(logPath, 2, 3, ['/Volumes/Gone']);
+		logScanStart(logPath, { available: 2, skipped: ['/Volumes/Gone'], total: 3 });
 		logScanComplete(logPath, { corrupt: 1, healthy: 9, newCorrupt: 1, pruned: 2, total: 12 });
 
 		const lines = readLines(logPath);

@@ -1,4 +1,5 @@
 import type Database from 'better-sqlite3';
+import type { Ora } from 'ora';
 
 import chalk from 'chalk';
 import { defineCommand } from 'citty';
@@ -28,6 +29,19 @@ import { flacVerifier } from '#verifiers/flac/verify.ts';
 
 type RecheckItem =
 	{ row: FileRow; source: 'files' } | { row: UnreadableFileRow; source: 'unreadable' };
+
+interface RecheckRun {
+	db: Database.Database;
+	spinner: Ora;
+	stats: RecheckStats;
+}
+
+interface RecheckStats {
+	corrupt: number;
+	healthy: number;
+	newCorrupt: number;
+	pruned: number;
+}
 
 export const recheckCommand = defineCommand({
 	args: {
@@ -73,44 +87,12 @@ export const recheckCommand = defineCommand({
 					text: `Rechecking: 0/${String(items.length)} files`,
 				}).start();
 
-				const stats = { corrupt: 0, healthy: 0, newCorrupt: 0, pruned: 0 };
+				const stats: RecheckStats = { corrupt: 0, healthy: 0, newCorrupt: 0, pruned: 0 };
+				const run: RecheckRun = { db, spinner, stats };
 				let processed = 0;
 
 				await processPool(items, config.parallelism, async (item) => {
-					const filePath = item.row.current_path;
-
-					if (!existsAsSpelled(filePath)) {
-						if (item.source === 'files') {
-							deleteFileByPath(db, filePath);
-						} else {
-							deleteUnreadableByPath(db, filePath);
-						}
-						stats.pruned++;
-						spinner.clear();
-						console.log(chalk.blue(`  PRUNED ${filePath}`));
-						processed++;
-						spinner.text = `Rechecking: ${String(processed)}/${String(items.length)} files`;
-						return;
-					}
-
-					const file = item.source === 'files' ? item.row : promoteUnreadable(db, filePath);
-					if (!file) return;
-
-					const outcome = await verifyAndRecord(db, flacVerifier, file, { fix: false });
-
-					if (outcome.kind === 'interrupted') return;
-
-					if (outcome.kind === 'corrupt') {
-						const isKnown = item.source === 'files' && item.row.acknowledged_at !== null;
-						stats.corrupt++;
-						if (!isKnown) stats.newCorrupt++;
-						printCorruptFile(spinner, filePath, outcome, { known: isKnown });
-					} else {
-						stats.healthy++;
-						spinner.clear();
-						console.log(chalk.green(`  HEALTHY ${filePath}`));
-					}
-
+					if (!(await recheckOne(run, item))) return;
 					processed++;
 					spinner.text = `Rechecking: ${String(processed)}/${String(items.length)} files`;
 				});
@@ -152,4 +134,45 @@ function promoteUnreadable(db: Database.Database, filePath: string): FileRow | u
 	});
 	deleteUnreadableByPath(db, filePath);
 	return findFileByPath(db, filePath);
+}
+
+function pruneItem({ db, spinner, stats }: RecheckRun, item: RecheckItem) {
+	const filePath = item.row.current_path;
+	if (item.source === 'files') {
+		deleteFileByPath(db, filePath);
+	} else {
+		deleteUnreadableByPath(db, filePath);
+	}
+	stats.pruned++;
+	spinner.clear();
+	console.log(chalk.blue(`  PRUNED ${filePath}`));
+}
+
+async function recheckOne(run: RecheckRun, item: RecheckItem): Promise<boolean> {
+	const { db, spinner, stats } = run;
+	const filePath = item.row.current_path;
+
+	if (!existsAsSpelled(filePath)) {
+		pruneItem(run, item);
+		return true;
+	}
+
+	const file = item.source === 'files' ? item.row : promoteUnreadable(db, filePath);
+	if (!file) return false;
+
+	const outcome = await verifyAndRecord({ db, fix: false, verifier: flacVerifier }, file);
+	if (outcome.kind === 'interrupted') return false;
+
+	if (outcome.kind === 'corrupt') {
+		const isKnown = item.source === 'files' && item.row.acknowledged_at !== null;
+		stats.corrupt++;
+		if (!isKnown) stats.newCorrupt++;
+		printCorruptFile(spinner, filePath, { ...outcome, known: isKnown });
+		return true;
+	}
+
+	stats.healthy++;
+	spinner.clear();
+	console.log(chalk.green(`  HEALTHY ${filePath}`));
+	return true;
 }

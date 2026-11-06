@@ -1,5 +1,6 @@
 import type Database from 'better-sqlite3';
 
+import type { FlacScanConfig } from '#config/types.ts';
 import type { FileRow, FileStatus, RecoveryResult, UnreadableFileRow } from '#database/types.ts';
 import type { FlacMetadata } from '#metadata.ts';
 
@@ -103,13 +104,14 @@ export function getCorruptFilesByAcknowledged(
 
 export function getFilesNeedingVerification(
 	database: Database.Database,
-	rescanDays: number,
-	batchSize: number,
 	directories: string[],
+	limits: Pick<FlacScanConfig, 'batch_size' | 'rescan_interval_days'>,
 ): FileRow[] {
 	if (directories.length === 0) return [];
 
-	const cutoff = new Date(Date.now() - rescanDays * 24 * 60 * 60 * 1000).toISOString();
+	const cutoff = new Date(
+		Date.now() - limits.rescan_interval_days * 24 * 60 * 60 * 1000,
+	).toISOString();
 
 	const { bounds, clauses } = underDirectories(directories);
 
@@ -123,7 +125,7 @@ export function getFilesNeedingVerification(
     ORDER BY last_verified_at ASC NULLS FIRST
     LIMIT ?
   `,
-	).all(...bounds, cutoff, batchSize) as FileRow[];
+	).all(...bounds, cutoff, limits.batch_size) as FileRow[];
 }
 
 export function getPathsUnder(

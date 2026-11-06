@@ -1,7 +1,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-export function logCorruption(logPath: string, filePath: string, details: string, known: boolean) {
+export function logCorruption(
+	logPath: string,
+	filePath: string,
+	{ details, known }: { details: string; known: boolean },
+) {
 	appendEntry(logPath, {
 		details,
 		event: 'corrupt',
@@ -38,7 +42,11 @@ export function logFixDetected(logPath: string, filePath: string, label: string)
 	});
 }
 
-export function logFixFailed(logPath: string, filePath: string, label: string, error: string) {
+export function logFixFailed(
+	logPath: string,
+	filePath: string,
+	{ error, label }: { error: string; label: string },
+) {
 	appendEntry(logPath, {
 		error,
 		event: `${label.toLowerCase()}_fix_failed`,
@@ -60,14 +68,12 @@ export function logScanComplete(
 
 export function logScanStart(
 	logPath: string,
-	available: number,
-	total: number,
-	skippedPaths: string[],
+	paths: { available: number; skipped: string[]; total: number },
 ) {
 	appendEntry(logPath, {
 		event: 'scan_start',
 		level: 'info',
-		paths: { available, skipped: skippedPaths, total },
+		paths,
 	});
 }
 

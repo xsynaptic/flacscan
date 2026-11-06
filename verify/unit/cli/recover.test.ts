@@ -43,41 +43,45 @@ describe('runRecovery disk-space preflight', () => {
 		seedCorrupt('b.flac');
 		const config = makeTestConfig(tempDir, { min_free_bytes: Number.MAX_SAFE_INTEGER });
 		const rows = getRecoveryCandidates(db);
-		const reportEntries: never[] = [];
-
-		await expect(
-			runRecovery(config, db, rows, 'nothing to recover', reportEntries),
-		).rejects.toThrow(FlacScanError);
+		await expect(runRecovery(config, db, rows)).rejects.toThrow(FlacScanError);
 
 		const written = fs.readdirSync(tempDir).filter((name) => name.includes('[Recovered]'));
 		expect(written).toEqual([]);
-		expect(reportEntries).toHaveLength(0);
 	});
 
 	it('skips a candidate whose source vanished without failing', async () => {
 		const gone = seedCorrupt('gone.flac');
 		fs.rmSync(gone);
 		const rows = getRecoveryCandidates(db);
-		const reportEntries: never[] = [];
+		await expect(runRecovery(makeTestConfig(tempDir), db, rows)).resolves.toEqual([]);
+	});
 
-		await expect(
-			runRecovery(makeTestConfig(tempDir), db, rows, 'nothing to recover', reportEntries),
-		).resolves.toBeUndefined();
+	it('stops a volume at the buffer floor without attempting its files', async () => {
+		seedCorrupt('a.flac');
+		seedCorrupt('b.flac');
+		const config = makeTestConfig(tempDir, { min_free_bytes: 10_000, parallelism: 1 });
+		const roomy = { bavail: 1_000_000, bsize: 1 } as fs.StatsFs;
+		const tight = { bavail: 10_500, bsize: 1 } as fs.StatsFs;
+		vi.spyOn(fs.promises, 'statfs').mockResolvedValueOnce(roomy).mockResolvedValue(tight);
+		const logSpy = vi.mocked(console.log);
 
-		expect(reportEntries).toHaveLength(0);
+		const entries = await runRecovery(config, db, getRecoveryCandidates(db));
+
+		expect(entries).toEqual([]);
+		const floorMessages = logSpy.mock.calls.filter(([line]) =>
+			String(line).includes('buffer floor reached'),
+		);
+		expect(floorMessages).toHaveLength(1);
+		const written = fs.readdirSync(tempDir).filter((name) => name.includes('[Recovered]'));
+		expect(written).toEqual([]);
 	});
 
 	it.runIf(caseInsensitiveTmp)('skips a candidate keyed by a case alias of its file', async () => {
 		const filePath = seedCorrupt('Track.flac');
 		fs.renameSync(filePath, path.join(tempDir, 'track.flac'));
 		const rows = getRecoveryCandidates(db);
-		const reportEntries: never[] = [];
-
-		await expect(
-			runRecovery(makeTestConfig(tempDir), db, rows, 'nothing to recover', reportEntries),
-		).resolves.toBeUndefined();
+		await expect(runRecovery(makeTestConfig(tempDir), db, rows)).resolves.toEqual([]);
 
 		expect(rows.map((row) => row.current_path)).toEqual([filePath]);
-		expect(reportEntries).toHaveLength(0);
 	});
 });

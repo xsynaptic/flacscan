@@ -55,33 +55,49 @@ interface Move {
 	to: Destination;
 }
 
+interface DiscoveryRun {
+	db: Database.Database;
+	logPath: string;
+	progress: Progress;
+	walked: string[];
+}
+
 interface Progress {
 	spinner: Ora;
 	stats: DiscoveryStats;
 	total: number;
 }
 
+interface Walk {
+	files: string[];
+	walked: string[];
+}
+
 export async function runDiscovery(
 	db: Database.Database,
-	files: string[],
 	config: FlacScanConfig,
-	walkedDirectories: string[],
+	{ files, walked }: Walk,
 ): Promise<DiscoveryStats> {
 	const listed = [...new Set(files)];
-	const progress: Progress = {
-		spinner: ora({
-			discardStdin: false,
-			text: `Discovery: processing 0/${String(listed.length)} files`,
-		}).start(),
-		stats: { moved: 0, processed: 0, pruned: 0, skipped: 0, unreadable: 0 },
-		total: listed.length,
+	const run: DiscoveryRun = {
+		db,
+		logPath: config.log_path,
+		progress: {
+			spinner: ora({
+				discardStdin: false,
+				text: `Discovery: processing 0/${String(listed.length)} files`,
+			}).start(),
+			stats: { moved: 0, processed: 0, pruned: 0, skipped: 0, unreadable: 0 },
+			total: listed.length,
+		},
+		walked,
 	};
-	const { spinner, stats } = progress;
+	const { spinner, stats } = run.progress;
 
-	const observation = await observe(db, listed, config, progress);
+	const observation = await observe(run, listed);
 	if (observation !== undefined) {
 		const destinations = classify(db, observation, stats);
-		const moves = planMoves(db, destinations, observation, walkedDirectories);
+		const moves = planMoves(run, destinations, observation);
 		applyMoves(db, moves, config);
 		stats.moved = moves.length;
 		const moved = new Set(moves.map((move) => move.to.filePath));
@@ -98,7 +114,7 @@ export async function runDiscovery(
 		return stats;
 	}
 
-	stats.pruned = pruneUnlisted(db, observation, walkedDirectories, spinner);
+	stats.pruned = pruneUnlisted(run, observation);
 	const movedSummary = stats.moved > 0 ? `, ${String(stats.moved)} moved` : '';
 	const prunedSummary = stats.pruned > 0 ? `, ${String(stats.pruned)} pruned` : '';
 	spinner.succeed(
@@ -107,18 +123,13 @@ export async function runDiscovery(
 	return stats;
 }
 
-async function observe(
-	db: Database.Database,
-	listed: string[],
-	config: FlacScanConfig,
-	progress: Progress,
-): Promise<Observation | undefined> {
+async function observe(run: DiscoveryRun, listed: string[]): Promise<Observation | undefined> {
 	const observation: Observation = { observed: new Map(), unreadable: new Set() };
 	for (let offset = 0; offset < listed.length; offset += CHUNK_SIZE) {
 		if (isShuttingDown()) return undefined;
 		const chunk = listed.slice(offset, offset + CHUNK_SIZE);
-		db.transaction(() => {
-			for (const filePath of chunk) observeFile(db, filePath, config, observation, progress);
+		run.db.transaction(() => {
+			for (const filePath of chunk) observeFile(run, filePath, observation);
 		})();
 		// Yield so SIGINT and the spinner can run between chunks
 		await new Promise((resolve) => setImmediate(resolve));
@@ -127,11 +138,9 @@ async function observe(
 }
 
 function observeFile(
-	db: Database.Database,
+	{ db, logPath, progress: { spinner, stats, total } }: DiscoveryRun,
 	filePath: string,
-	config: FlacScanConfig,
 	observation: Observation,
-	{ spinner, stats, total }: Progress,
 ) {
 	stats.processed++;
 	spinner.text = `Discovery: ${String(stats.processed)}/${String(total)} files`;
@@ -142,7 +151,7 @@ function observeFile(
 		if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
 		observation.unreadable.add(filePath);
 		upsertUnreadableFile(db, { current_path: filePath, error_output: String(error) });
-		logUnreadable(config.log_path, filePath, String(error));
+		logUnreadable(logPath, filePath, String(error));
 		stats.unreadable++;
 	}
 }
@@ -164,13 +173,20 @@ function classify(
 	return destinations;
 }
 
+function countClaims(candidatesByDestination: string[][]): Map<string, number> {
+	const claims = new Map<string, number>();
+	for (const candidates of candidatesByDestination) {
+		for (const candidate of candidates) claims.set(candidate, (claims.get(candidate) ?? 0) + 1);
+	}
+	return claims;
+}
+
 function planMoves(
-	db: Database.Database,
+	{ db, walked }: DiscoveryRun,
 	destinations: Destination[],
 	{ observed, unreadable }: Observation,
-	walkedDirectories: string[],
 ): Move[] {
-	const prefixes = walkedDirectories.map((directory) => directoryPrefix(directory));
+	const prefixes = walked.map((directory) => directoryPrefix(directory));
 	const candidatesByDestination = destinations.map((destination) =>
 		findFilesBySizeAndMtime(db, destination.stat.size, destination.stat.mtime)
 			.map((row) => row.current_path)
@@ -181,11 +197,7 @@ function planMoves(
 				return now?.size !== destination.stat.size || now.mtime !== destination.stat.mtime;
 			}),
 	);
-
-	const claims = new Map<string, number>();
-	for (const candidates of candidatesByDestination) {
-		for (const candidate of candidates) claims.set(candidate, (claims.get(candidate) ?? 0) + 1);
-	}
+	const claims = countClaims(candidatesByDestination);
 
 	const moves: Move[] = [];
 	for (const [index, destination] of destinations.entries()) {
@@ -241,14 +253,12 @@ function upsertDestination(db: Database.Database, { existing, filePath, stat }: 
 }
 
 function pruneUnlisted(
-	db: Database.Database,
+	{ db, progress: { spinner }, walked }: DiscoveryRun,
 	{ observed, unreadable }: Observation,
-	walkedDirectories: string[],
-	spinner: Ora,
 ): number {
 	const isListed = (filePath: string) => observed.has(filePath) || unreadable.has(filePath);
-	const files = getPathsUnder(db, 'files', walkedDirectories).filter((row) => !isListed(row));
-	const unreadableRows = getPathsUnder(db, 'unreadable_files', walkedDirectories).filter(
+	const files = getPathsUnder(db, 'files', walked).filter((row) => !isListed(row));
+	const unreadableRows = getPathsUnder(db, 'unreadable_files', walked).filter(
 		(row) => !isListed(row),
 	);
 	db.transaction(() => {

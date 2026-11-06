@@ -60,8 +60,11 @@ function freshInstance(bad: boolean): Instance {
 
 async function scanCollection(db: Database.Database, root: string, config: FlacScanConfig) {
 	const { files, mountCheck } = await discoverFiles([root], verifier.extensions);
-	const discovery = await runDiscovery(db, files, config, mountCheck.available);
-	const verification = await runVerification(db, config, mountCheck.available, verifier);
+	const discovery = await runDiscovery(db, config, { files, walked: mountCheck.available });
+	const verification = await runVerification(db, config, {
+		directories: mountCheck.available,
+		verifier: verifier,
+	});
 	return { discovery, files, newCorrupt: verification?.newCorrupt ?? 0 };
 }
 

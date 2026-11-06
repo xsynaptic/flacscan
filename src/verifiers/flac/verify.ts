@@ -8,33 +8,38 @@ async function verifyFile(filePath: string): Promise<VerificationResult> {
 		await execFile('nice', ['-n', '19', 'flac', '-ts', filePath]);
 		return { status: 'healthy' };
 	} catch (error: unknown) {
-		const signal =
-			error instanceof Error && 'signal' in error ? (error as { signal: unknown }).signal : null;
-		if (signal === 'SIGINT' || signal === 'SIGTERM') {
-			return { status: 'interrupted' };
-		}
-		const code =
-			error instanceof Error && 'code' in error ? (error as { code: unknown }).code : null;
-		if (typeof code === 'string') {
-			// Spawn failure (EMFILE/ENOENT) is the OS refusing, not a file verdict
-			throw error;
-		}
-		if (typeof signal === 'string') {
-			// Decoder crash is a verdict about the file
-			const stderr = extractStderr(error);
-			return {
-				errorOutput: `flac terminated by ${signal}${stderr ? `: ${stderr}` : ''}`,
-				errorTimestamp: null,
-				status: 'corrupt',
-			};
-		}
-		const errorOutput = extractStderr(error);
+		return failureVerdict(error);
+	}
+}
+
+function failureVerdict(error: unknown): VerificationResult {
+	const { code, signal } = readExecFailure(error);
+	if (signal === 'SIGINT' || signal === 'SIGTERM') {
+		return { status: 'interrupted' };
+	}
+	if (typeof code === 'string') {
+		// Spawn failure (EMFILE/ENOENT) is the OS refusing, not a file verdict
+		throw error;
+	}
+	const stderr = extractStderr(error);
+	if (typeof signal === 'string') {
+		// Decoder crash is a verdict about the file
 		return {
-			errorOutput,
-			errorTimestamp: extractErrorTimestamp(errorOutput),
+			errorOutput: `flac terminated by ${signal}${stderr ? `: ${stderr}` : ''}`,
+			errorTimestamp: null,
 			status: 'corrupt',
 		};
 	}
+	return { errorOutput: stderr, errorTimestamp: extractErrorTimestamp(stderr), status: 'corrupt' };
+}
+
+function readExecFailure(error: unknown): { code: unknown; signal: unknown } {
+	if (!(error instanceof Error)) return { code: null, signal: null };
+	const failure = error as Error & { code?: unknown; signal?: unknown };
+	return {
+		code: 'code' in error ? failure.code : null,
+		signal: 'signal' in error ? failure.signal : null,
+	};
 }
 
 const SAMPLES_PATTERN = /after processing (\d+) samples/;

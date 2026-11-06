@@ -9,6 +9,8 @@ import { runCommand } from '#cli/run-command.ts';
 import { sharedArguments } from '#cli/shared-arguments.ts';
 import { getAllUnreadableFiles, getCorruptFiles } from '#database/queries.ts';
 
+type Palette = ReturnType<typeof formatReport>;
+
 function formatReport(useColor: boolean) {
 	const c = {
 		bold: useColor ? chalk.bold : (s: string) => s,
@@ -33,83 +35,38 @@ export const reportCommand = defineCommand({
 	async run({ args }) {
 		await runCommand(args, {}, (db) => {
 			const outputFile = args.output;
-			const useColor = !outputFile;
-			const c = formatReport(useColor);
-
-			const lines: string[] = [];
-			function write(line: string) {
-				lines.push(line);
-			}
+			const c = formatReport(!outputFile);
 
 			const corrupt = getCorruptFiles(db);
 			const unreadable = getAllUnreadableFiles(db);
-
 			const totalIssues = corrupt.length + unreadable.length;
 
-			write(c.bold('\nflacscan report\n'));
-
-			function writeCorruptSection(heading: string, files: FileRow[]) {
-				if (files.length === 0) return;
-				write(c.bold(`  ${heading} (${String(files.length)}):\n`));
-				for (const file of files) {
-					write(`    ${c.red('[corrupt]')} ${file.current_path}`);
-					if (file.error_timestamp) {
-						write(`      Glitch at: ${file.error_timestamp}`);
-					}
-					if (file.last_verified_at) {
-						write(`      Last verified: ${file.last_verified_at}`);
-					}
-					if (file.acknowledged_at) {
-						write(`      Accepted: ${file.acknowledged_at}`);
-					}
-					if (file.recovery_result) {
-						const lost =
-							file.recovery_lost_samples === null
-								? ''
-								: ` (${String(file.recovery_lost_samples)} samples lost off the end)`;
-						const why = file.recovery_detail ? ` - ${file.recovery_detail}` : '';
-						write(`      Recovery: ${file.recovery_result}${lost}${why}`);
-					}
-					if (file.error_output) {
-						write(`      Error: ${file.error_output.replaceAll('\n', '\n             ')}`);
-					}
-					write('');
-				}
-			}
-
-			function writeUnreadableSection(heading: string, files: UnreadableFileRow[]) {
-				if (files.length === 0) return;
-				write(c.bold(`  ${heading} (${String(files.length)}):\n`));
-				for (const file of files) {
-					write(`    ${c.red('[unreadable]')} ${file.current_path}`);
-					if (file.acknowledged_at) {
-						write(`      Accepted: ${file.acknowledged_at}`);
-					}
-					write(`      Error: ${file.error_output.replaceAll('\n', '\n             ')}`);
-					write('');
-				}
-			}
-
+			const lines = [c.bold('\nflacscan report\n')];
 			if (totalIssues === 0) {
-				write('  No issues found.\n');
+				lines.push('  No issues found.\n');
 			} else {
-				write(`  Total issues: ${String(totalIssues)}\n`);
-
-				writeCorruptSection(
-					'New corrupt files',
-					corrupt.filter((file) => file.acknowledged_at === null),
-				);
-				writeCorruptSection(
-					'Accepted corrupt files',
-					corrupt.filter((file) => file.acknowledged_at !== null),
-				);
-				writeUnreadableSection(
-					'New unreadable files',
-					unreadable.filter((file) => file.acknowledged_at === null),
-				);
-				writeUnreadableSection(
-					'Accepted unreadable files',
-					unreadable.filter((file) => file.acknowledged_at !== null),
+				lines.push(
+					`  Total issues: ${String(totalIssues)}\n`,
+					...corruptSection(
+						c,
+						'New corrupt files',
+						corrupt.filter((file) => file.acknowledged_at === null),
+					),
+					...corruptSection(
+						c,
+						'Accepted corrupt files',
+						corrupt.filter((file) => file.acknowledged_at !== null),
+					),
+					...unreadableSection(
+						c,
+						'New unreadable files',
+						unreadable.filter((file) => file.acknowledged_at === null),
+					),
+					...unreadableSection(
+						c,
+						'Accepted unreadable files',
+						unreadable.filter((file) => file.acknowledged_at !== null),
+					),
 				);
 			}
 
@@ -126,3 +83,51 @@ export const reportCommand = defineCommand({
 		});
 	},
 });
+
+function corruptDetails(file: FileRow): string[] {
+	const details: string[] = [];
+	if (file.error_timestamp) details.push(`      Glitch at: ${file.error_timestamp}`);
+	if (file.last_verified_at) details.push(`      Last verified: ${file.last_verified_at}`);
+	if (file.acknowledged_at) details.push(`      Accepted: ${file.acknowledged_at}`);
+	if (file.recovery_result) details.push(recoveryLine(file, file.recovery_result));
+	if (file.error_output) details.push(errorLine(file.error_output));
+	return details;
+}
+
+function corruptSection(c: Palette, heading: string, files: FileRow[]): string[] {
+	if (files.length === 0) return [];
+	return [
+		c.bold(`  ${heading} (${String(files.length)}):\n`),
+		...files.flatMap((file) => [
+			`    ${c.red('[corrupt]')} ${file.current_path}`,
+			...corruptDetails(file),
+			'',
+		]),
+	];
+}
+
+function errorLine(errorOutput: string): string {
+	return `      Error: ${errorOutput.replaceAll('\n', '\n             ')}`;
+}
+
+function recoveryLine(file: FileRow, result: string): string {
+	const lost =
+		file.recovery_lost_samples === null
+			? ''
+			: ` (${String(file.recovery_lost_samples)} samples lost off the end)`;
+	const why = file.recovery_detail ? ` - ${file.recovery_detail}` : '';
+	return `      Recovery: ${result}${lost}${why}`;
+}
+
+function unreadableSection(c: Palette, heading: string, files: UnreadableFileRow[]): string[] {
+	if (files.length === 0) return [];
+	return [
+		c.bold(`  ${heading} (${String(files.length)}):\n`),
+		...files.flatMap((file) => [
+			`    ${c.red('[unreadable]')} ${file.current_path}`,
+			...(file.acknowledged_at ? [`      Accepted: ${file.acknowledged_at}`] : []),
+			errorLine(file.error_output),
+			'',
+		]),
+	];
+}

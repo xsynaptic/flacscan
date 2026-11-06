@@ -63,7 +63,10 @@ describe('runVerification', () => {
 		const filePath = seedFile('ok.flac');
 		const verifier = fakeVerifier(() => Promise.resolve({ status: 'healthy' }));
 
-		const stats = await runVerification(db, makeTestConfig(tempDir), [tempDir], verifier);
+		const stats = await runVerification(db, makeTestConfig(tempDir), {
+			directories: [tempDir],
+			verifier: verifier,
+		});
 
 		expect(stats).toMatchObject({ exitCode: 0, healthy: 1 });
 		const row = findFileByPath(db, filePath);
@@ -78,7 +81,7 @@ describe('runVerification', () => {
 			Promise.resolve({ errorOutput: 'boom', errorTimestamp: 'sample 1', status: 'corrupt' }),
 		);
 
-		const stats = await runVerification(db, config, [tempDir], verifier);
+		const stats = await runVerification(db, config, { directories: [tempDir], verifier: verifier });
 
 		expect(stats?.corrupt).toBe(1);
 		expect(stats?.exitCode).toBe(1);
@@ -94,7 +97,10 @@ describe('runVerification', () => {
 			Promise.resolve({ errorOutput: 'boom', errorTimestamp: null, status: 'corrupt' }),
 		);
 
-		const stats = await runVerification(db, makeTestConfig(tempDir), [tempDir], verifier);
+		const stats = await runVerification(db, makeTestConfig(tempDir), {
+			directories: [tempDir],
+			verifier: verifier,
+		});
 
 		expect(stats?.corrupt).toBe(1);
 		expect(stats?.newCorrupt).toBe(1);
@@ -111,7 +117,10 @@ describe('runVerification', () => {
 			Promise.resolve({ errorOutput: 'boom', errorTimestamp: null, status: 'corrupt' }),
 		);
 
-		const stats = await runVerification(db, makeTestConfig(tempDir), [tempDir], verifier);
+		const stats = await runVerification(db, makeTestConfig(tempDir), {
+			directories: [tempDir],
+			verifier: verifier,
+		});
 
 		expect(stats?.corrupt).toBe(1);
 		expect(stats?.newCorrupt).toBe(0);
@@ -123,7 +132,10 @@ describe('runVerification', () => {
 		fs.rmSync(filePath);
 		const verifier = fakeVerifier(() => Promise.resolve({ status: 'healthy' }));
 
-		const stats = await runVerification(db, makeTestConfig(tempDir), [tempDir], verifier);
+		const stats = await runVerification(db, makeTestConfig(tempDir), {
+			directories: [tempDir],
+			verifier: verifier,
+		});
 
 		expect(stats?.pruned).toBe(1);
 		expect(findFileByPath(db, filePath)).toBeUndefined();
@@ -135,7 +147,10 @@ describe('runVerification', () => {
 		upsertFile(db, { current_path: alias, file_mtime: null, file_size: null });
 		const verifier = fakeVerifier(() => Promise.resolve({ status: 'healthy' }));
 
-		const stats = await runVerification(db, makeTestConfig(tempDir), [tempDir], verifier);
+		const stats = await runVerification(db, makeTestConfig(tempDir), {
+			directories: [tempDir],
+			verifier: verifier,
+		});
 
 		expect(stats?.pruned).toBe(1);
 		expect(findFileByPath(db, alias)).toBeUndefined();
@@ -163,7 +178,7 @@ describe('runVerification', () => {
 			requiredBinaries: [],
 		});
 
-		const stats = await runVerification(db, config, [tempDir], verifier);
+		const stats = await runVerification(db, config, { directories: [tempDir], verifier: verifier });
 
 		expect(stats?.fixed).toBe(1);
 		expect(findFileByPath(db, filePath)?.last_result).toBe('healthy');
@@ -185,7 +200,7 @@ describe('runVerification', () => {
 			},
 		);
 
-		const stats = await runVerification(db, config, [tempDir], verifier);
+		const stats = await runVerification(db, config, { directories: [tempDir], verifier: verifier });
 
 		expect(fixSpy).not.toHaveBeenCalled();
 		expect(stats?.corrupt).toBe(1);
@@ -195,7 +210,10 @@ describe('runVerification', () => {
 	it('returns null when no files need verification', async () => {
 		const verifier = fakeVerifier(() => Promise.resolve({ status: 'healthy' }));
 
-		const result = await runVerification(db, makeTestConfig(tempDir), [tempDir], verifier);
+		const result = await runVerification(db, makeTestConfig(tempDir), {
+			directories: [tempDir],
+			verifier: verifier,
+		});
 
 		expect(result).toBeNull();
 	});

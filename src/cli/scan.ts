@@ -14,6 +14,8 @@ import { sendNotification } from '#notify.ts';
 import { ensureBinary } from '#shell.ts';
 import { flacVerifier } from '#verifiers/flac/verify.ts';
 
+const noVerification = { corrupt: 0, exitCode: 0, fixed: 0, healthy: 0, newCorrupt: 0, pruned: 0 };
+
 function reportWalk(spinner: Ora, walk: Awaited<ReturnType<typeof discoverFiles>>) {
 	const { files, incomplete, mountCheck } = walk;
 	if (mountCheck.available.length === 0) {
@@ -81,51 +83,47 @@ export const scanCommand = defineCommand({
 				const walkSpinner = ora({ discardStdin: false, text: 'Scanning directories...' }).start();
 				const walk = await discoverFiles(config.directories, flacVerifier.extensions);
 				reportWalk(walkSpinner, walk);
-				const { files, mountCheck, walked } = walk;
+				const { mountCheck } = walk;
 
-				logScanStart(
-					config.log_path,
-					mountCheck.available.length,
-					config.directories.length,
-					mountCheck.skipped,
-				);
+				logScanStart(config.log_path, {
+					available: mountCheck.available.length,
+					skipped: mountCheck.skipped,
+					total: config.directories.length,
+				});
 
-				const discoveryStats = await runDiscovery(db, files, config, walked);
+				const discoveryStats = await runDiscovery(db, config, walk);
 
 				if (isShuttingDown()) {
 					return;
 				}
 
-				const verificationStats = await runVerification(
-					db,
-					config,
-					mountCheck.available,
-					flacVerifier,
-				);
+				const verificationStats =
+					(await runVerification(db, config, {
+						directories: mountCheck.available,
+						verifier: flacVerifier,
+					})) ?? noVerification;
 
-				const pruned = discoveryStats.pruned + (verificationStats?.pruned ?? 0);
+				const pruned = discoveryStats.pruned + verificationStats.pruned;
 				logScanComplete(config.log_path, {
-					corrupt: verificationStats?.corrupt ?? 0,
-					healthy: verificationStats?.healthy ?? 0,
-					newCorrupt: verificationStats?.newCorrupt ?? 0,
+					corrupt: verificationStats.corrupt,
+					healthy: verificationStats.healthy,
+					newCorrupt: verificationStats.newCorrupt,
 					pruned,
-					total: verificationStats
-						? verificationStats.healthy +
-							verificationStats.corrupt +
-							verificationStats.fixed +
-							pruned
-						: pruned,
+					total:
+						verificationStats.healthy +
+						verificationStats.corrupt +
+						verificationStats.fixed +
+						pruned,
 				});
 
-				const newCorrupt = verificationStats?.newCorrupt ?? 0;
-				if (config.notify && newCorrupt > 0) {
+				if (config.notify && verificationStats.newCorrupt > 0) {
 					await sendNotification(
 						'flacscan',
-						`${String(newCorrupt)} new corrupt file(s) found. Run "flacscan report" for details.`,
+						`${String(verificationStats.newCorrupt)} new corrupt file(s) found. Run "flacscan report" for details.`,
 					);
 				}
 
-				process.exitCode = verificationStats?.exitCode ?? 0;
+				process.exitCode = verificationStats.exitCode;
 			},
 		);
 	},

@@ -22,53 +22,39 @@ interface CliArgs {
 	'rescan-days'?: string | undefined;
 }
 
+interface FileSetting<Value> {
+	expected: string;
+	read(value: unknown): undefined | Value;
+}
+
 export function loadConfig(cliArgs: CliArgs): FlacScanConfig {
-	const configPath = resolveConfigPath(cliArgs.config);
-
-	let fileConfig: Partial<FlacScanConfig> = {};
-
-	if (fs.existsSync(configPath)) {
-		let parsed: unknown;
-		try {
-			const raw = fs.readFileSync(configPath, 'utf8');
-			parsed = parseYaml(raw);
-		} catch (error) {
-			throw new FlacScanError(`Failed to parse config file at ${configPath}: ${String(error)}`);
-		}
-		fileConfig = validateFileConfig(parsed, configPath);
-	}
+	const fileConfig = readFileConfig(resolveConfigPath(cliArgs.config));
+	const pick = <Key extends keyof FlacScanConfig>(
+		key: Key,
+		cliValue: FlacScanConfig[Key] | undefined,
+	) => cliValue ?? fileConfig[key] ?? DEFAULT_CONFIG[key];
 
 	const config: FlacScanConfig = {
-		batch_size:
-			parseNumeric(cliArgs['batch-size'], 'batch-size') ??
-			fileConfig.batch_size ??
-			DEFAULT_CONFIG.batch_size,
-		db_path: expandTilde(cliArgs['db-path'] ?? fileConfig.db_path ?? DEFAULT_CONFIG.db_path),
-		directories: fileConfig.directories ?? DEFAULT_CONFIG.directories,
-		fix: cliArgs.fix === true ? true : (fileConfig.fix ?? DEFAULT_CONFIG.fix),
-		log_path: expandTilde(cliArgs['log-path'] ?? fileConfig.log_path ?? DEFAULT_CONFIG.log_path),
-		min_free_bytes:
-			parseNumeric(cliArgs['min-free-bytes'], 'min-free-bytes') ??
-			fileConfig.min_free_bytes ??
-			DEFAULT_CONFIG.min_free_bytes,
-		notify: cliArgs.notify === true ? true : (fileConfig.notify ?? DEFAULT_CONFIG.notify),
-		parallelism:
-			parseNumeric(cliArgs.parallelism, 'parallelism') ??
-			fileConfig.parallelism ??
-			DEFAULT_CONFIG.parallelism,
-		recover_max_trailing_loss_seconds:
-			parsePositiveNumber(cliArgs['max-trailing-loss'], 'max-trailing-loss') ??
-			fileConfig.recover_max_trailing_loss_seconds ??
-			DEFAULT_CONFIG.recover_max_trailing_loss_seconds,
-		rescan_interval_days:
-			parseNumeric(cliArgs['rescan-days'], 'rescan-days') ??
-			fileConfig.rescan_interval_days ??
-			DEFAULT_CONFIG.rescan_interval_days,
+		batch_size: pick('batch_size', parseNumeric(cliArgs['batch-size'], 'batch-size')),
+		db_path: expandTilde(pick('db_path', cliArgs['db-path'])),
+		directories: pick('directories', cliDirectories(cliArgs.directory)),
+		fix: pick('fix', cliFlag(cliArgs.fix)),
+		log_path: expandTilde(pick('log_path', cliArgs['log-path'])),
+		min_free_bytes: pick(
+			'min_free_bytes',
+			parseNumeric(cliArgs['min-free-bytes'], 'min-free-bytes'),
+		),
+		notify: pick('notify', cliFlag(cliArgs.notify)),
+		parallelism: pick('parallelism', parseNumeric(cliArgs.parallelism, 'parallelism')),
+		recover_max_trailing_loss_seconds: pick(
+			'recover_max_trailing_loss_seconds',
+			parsePositiveNumber(cliArgs['max-trailing-loss'], 'max-trailing-loss'),
+		),
+		rescan_interval_days: pick(
+			'rescan_interval_days',
+			parseNumeric(cliArgs['rescan-days'], 'rescan-days'),
+		),
 	};
-
-	if (cliArgs.directory) {
-		config.directories = [expandTilde(cliArgs.directory)];
-	}
 
 	if (config.directories.length === 0) {
 		throw new FlacScanError(
@@ -79,6 +65,15 @@ export function loadConfig(cliArgs: CliArgs): FlacScanConfig {
 	return config;
 }
 
+function cliDirectories(directory: string | undefined): string[] | undefined {
+	if (!directory) return undefined;
+	return [expandTilde(directory)];
+}
+
+function cliFlag(value: boolean | string | undefined): true | undefined {
+	return value === true ? true : undefined;
+}
+
 function expandTilde(filePath: string): string {
 	if (filePath.startsWith('~/')) {
 		return path.join(os.homedir(), filePath.slice(2));
@@ -86,27 +81,60 @@ function expandTilde(filePath: string): string {
 	return filePath;
 }
 
-const KNOWN_KEYS = new Set([
-	'batch_size',
-	'db_path',
+function isStringList(value: unknown): value is string[] {
+	return Array.isArray(value) && value.every((entry) => typeof entry === 'string');
+}
+
+const booleanSetting: FileSetting<boolean> = {
+	expected: 'true or false',
+	read: (value) => (typeof value === 'boolean' ? value : undefined),
+};
+
+const positiveIntegerSetting: FileSetting<number> = {
+	expected: 'a positive integer',
+	read: (value) =>
+		typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : undefined,
+};
+
+const stringSetting: FileSetting<string> = {
+	expected: 'a string',
+	read: (value) => (typeof value === 'string' ? value : undefined),
+};
+
+const fileSettings: { [Key in keyof FlacScanConfig]: FileSetting<FlacScanConfig[Key]> } = {
+	batch_size: positiveIntegerSetting,
+	db_path: stringSetting,
+	directories: {
+		expected: 'a list of strings',
+		read: (value) => (isStringList(value) ? value.map((entry) => expandTilde(entry)) : undefined),
+	},
+	fix: booleanSetting,
+	log_path: stringSetting,
+	min_free_bytes: positiveIntegerSetting,
+	notify: booleanSetting,
+	parallelism: positiveIntegerSetting,
+	recover_max_trailing_loss_seconds: {
+		expected: 'a positive number',
+		read: (value) =>
+			typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : undefined,
+	},
+	rescan_interval_days: positiveIntegerSetting,
+};
+
+const fileSettingOrder = [
 	'directories',
-	'fix',
-	'log_path',
-	'min_free_bytes',
-	'notify',
-	'parallelism',
-	'recover_max_trailing_loss_seconds',
-	'rescan_interval_days',
-]);
-
-const POSITIVE_INTEGER_KEYS = [
 	'batch_size',
 	'min_free_bytes',
 	'parallelism',
 	'rescan_interval_days',
-] as const;
+	'recover_max_trailing_loss_seconds',
+	'fix',
+	'notify',
+	'db_path',
+	'log_path',
+] as const satisfies readonly (keyof FlacScanConfig)[];
 
-const STRING_KEYS = ['db_path', 'log_path'] as const;
+const knownKeys = new Set<string>(fileSettingOrder);
 
 function getFlacScanDir(): string {
 	return path.join(os.homedir(), '.flacscan');
@@ -130,6 +158,32 @@ function parsePositiveNumber(value: string | undefined, name: string): number | 
 	return parsed;
 }
 
+function readFileConfig(configPath: string): Partial<FlacScanConfig> {
+	if (!fs.existsSync(configPath)) return {};
+	let parsed: unknown;
+	try {
+		parsed = parseYaml(fs.readFileSync(configPath, 'utf8'));
+	} catch (error) {
+		throw new FlacScanError(`Failed to parse config file at ${configPath}: ${String(error)}`);
+	}
+	return validateFileConfig(parsed, configPath);
+}
+
+function readSetting<Key extends keyof FlacScanConfig>(
+	key: Key,
+	value: unknown,
+	configPath: string,
+): FlacScanConfig[Key] {
+	const setting = fileSettings[key];
+	const read = setting.read(value);
+	if (read === undefined) {
+		throw new FlacScanError(
+			`Invalid value for ${key} in ${configPath} (must be ${setting.expected})`,
+		);
+	}
+	return read;
+}
+
 function resolveConfigPath(explicit?: string): string {
 	if (explicit) return expandTilde(explicit);
 
@@ -146,75 +200,23 @@ function validateFileConfig(parsed: unknown, configPath: string): Partial<FlacSc
 	}
 
 	const source = parsed as Record<string, unknown>;
-	const result: Partial<FlacScanConfig> = {};
+	warnUnknownKeys(source, configPath);
 
+	const result: Partial<FlacScanConfig> = {};
+	const assign = <Key extends keyof FlacScanConfig>(key: Key, value: FlacScanConfig[Key]) => {
+		result[key] = value;
+	};
+	for (const key of fileSettingOrder) {
+		const value = source[key];
+		if (value !== undefined) assign(key, readSetting(key, value, configPath));
+	}
+	return result;
+}
+
+function warnUnknownKeys(source: Record<string, unknown>, configPath: string) {
 	for (const key of Object.keys(source)) {
-		if (!KNOWN_KEYS.has(key)) {
+		if (!knownKeys.has(key)) {
 			console.warn(`Warning: unknown config key "${key}" in ${configPath}`);
 		}
 	}
-
-	if ('directories' in source) {
-		const value = source.directories;
-		const directoriesError = `Invalid value for directories in ${configPath} (must be a list of strings)`;
-		if (!Array.isArray(value)) {
-			throw new FlacScanError(directoriesError);
-		}
-		const directories: string[] = [];
-		for (const entry of value) {
-			if (typeof entry !== 'string') {
-				throw new FlacScanError(directoriesError);
-			}
-			directories.push(expandTilde(entry));
-		}
-		result.directories = directories;
-	}
-
-	for (const key of POSITIVE_INTEGER_KEYS) {
-		const value = source[key];
-		if (value === undefined) continue;
-		if (typeof value !== 'number' || !Number.isSafeInteger(value) || value <= 0) {
-			throw new FlacScanError(
-				`Invalid value for ${key} in ${configPath} (must be a positive integer)`,
-			);
-		}
-		result[key] = value;
-	}
-
-	if ('recover_max_trailing_loss_seconds' in source) {
-		const value = source.recover_max_trailing_loss_seconds;
-		if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
-			throw new FlacScanError(
-				`Invalid value for recover_max_trailing_loss_seconds in ${configPath} (must be a positive number)`,
-			);
-		}
-		result.recover_max_trailing_loss_seconds = value;
-	}
-
-	if ('fix' in source) {
-		const value = source.fix;
-		if (typeof value !== 'boolean') {
-			throw new FlacScanError(`Invalid value for fix in ${configPath} (must be true or false)`);
-		}
-		result.fix = value;
-	}
-
-	if ('notify' in source) {
-		const value = source.notify;
-		if (typeof value !== 'boolean') {
-			throw new FlacScanError(`Invalid value for notify in ${configPath} (must be true or false)`);
-		}
-		result.notify = value;
-	}
-
-	for (const key of STRING_KEYS) {
-		const value = source[key];
-		if (value === undefined) continue;
-		if (typeof value !== 'string') {
-			throw new FlacScanError(`Invalid value for ${key} in ${configPath} (must be a string)`);
-		}
-		result[key] = value;
-	}
-
-	return result;
 }
