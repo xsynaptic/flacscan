@@ -33,7 +33,7 @@ flacscan recover                     # re-encode salvageable corrupt files along
 flacscan status                      # collection health overview
 flacscan report                      # dump all known issues (--output file.txt)
 flacscan list                        # file paths to stdout for scripting
-flacscan list new                    # filters: new, accepted, unreadable
+flacscan list new                    # filters: new, accepted, regressed, unreadable
 flacscan list --json                 # structured JSON per issue (combine with a filter)
 ```
 
@@ -93,6 +93,10 @@ Files are re-verified on a configurable interval. A full sweep of a large collec
 
 An initial scan of a large collection often finds standing damage (files that are hard or impossible to replace). Replace what you can, then run `flacscan accept` to mark the rest as known. From then on `scan` and `recheck` exit 0 and stay quiet unless something **new** goes bad; exit 1 means new corruption you haven't accepted yet. An accepted issue reverts to new automatically when a file verifies healthy again or when its content changes (different mtime/size), since changed bytes are a new episode. `status`, `report`, `list`, and the log all split new issues from accepted ones; `list new` and `list accepted` filter each side.
 
+### Regressions
+
+A file that turns up corrupt after verifying healthy, with no content change in between, is a **regression**: its bytes went bad in place. `scan` and `recheck` print it as `REGRESSED` with its last healthy time, `status` counts regressions, `report` tags them `[regressed]`, `list regressed` lists them, and the `--notify` banner counts new ones; the log and `list --json` carry `last_healthy_at`. Like acceptance, the healthy history follows a move and is cleared by a content change (different mtime/size).
+
 ### File categories
 
 | Category       | Meaning                                                    |
@@ -110,7 +114,7 @@ An initial scan of a large collection often finds standing damage (files that ar
 
 - **Path-keyed database** - files are tracked by their exact path, and configured directories are matched in their on-disk case. A renamed or moved file keeps its row, verdict and acceptance included, when exactly one row with the same size and mtime has lost its file and no other new path claims it; otherwise it is a new file. Each scan prunes rows for files missing from a directory it walked completely, so a file moved to an offline volume is verified again as new once that volume is back.
 - **Batch model** - designed for low, predictable resource usage rather than scanning everything at once. A single run touches at most `batch_size` files.
-- **No metadata extraction during discovery** - discovery only checks mtime/size via `stat`, not FLAC headers (artist/title/etc. are read later, only for files that turn up corrupt). This keeps discovery fast but means the tool can't detect files that were silently corrupted without a mtime change (_e.g._, bitrot on a filesystem that doesn't update mtime). The periodic rescan interval mitigates this.
+- **No metadata extraction during discovery** - discovery only checks mtime/size via `stat`, not FLAC headers (artist/title/etc. are read later, only for files that turn up corrupt). This keeps discovery fast but means discovery can't see a file corrupted without an mtime change (_e.g._, bitrot on a filesystem that doesn't update mtime); the periodic rescan catches it and flags it as a [regression](#regressions).
 - **Graceful shutdown** - Ctrl+C finishes in-flight workers before exiting. A second Ctrl+C force-quits.
 - **One run at a time** - `scan`, `recheck`, `recover` and `accept` hold `<db-path>.lock`; a second one exits 2 naming the running pid, and a lock left by a dead process is taken over.
 

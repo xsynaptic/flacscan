@@ -13,7 +13,7 @@ import type { FormatVerifier } from '#verifiers/types.ts';
 
 import { runDiscovery } from '#cli/scan-discover.ts';
 import { runVerification } from '#cli/scan-verify.ts';
-import { acknowledgeAllIssues, findFileByPath } from '#database/queries.ts';
+import { acknowledgeAllIssues, findFileByPath, getRegressedFiles } from '#database/queries.ts';
 import { initializeSchema } from '#database/schema.ts';
 import { discoverFiles } from '#discovery.ts';
 
@@ -43,7 +43,10 @@ interface Instance {
 	bad: boolean;
 	duplicated: boolean;
 	mayBeAccepted: boolean;
+	mayHaveHealthyHistory: boolean;
+	mustHaveHealthyHistory: boolean;
 	renames: number;
+	rotted: boolean;
 	rowVerified: boolean;
 }
 
@@ -53,7 +56,10 @@ function freshInstance(bad: boolean): Instance {
 		bad,
 		duplicated: false,
 		mayBeAccepted: false,
+		mayHaveHealthyHistory: false,
+		mustHaveHealthyHistory: false,
 		renames: 0,
+		rotted: false,
 		rowVerified: false,
 	};
 }
@@ -65,7 +71,12 @@ async function scanCollection(db: Database.Database, root: string, config: FlacS
 		directories: mountCheck.available,
 		verifier: verifier,
 	});
-	return { discovery, files, newCorrupt: verification?.newCorrupt ?? 0 };
+	return {
+		discovery,
+		files,
+		newCorrupt: verification?.newCorrupt ?? 0,
+		newRegressed: verification?.newRegressed ?? 0,
+	};
 }
 
 function writeFlac(filePath: string, bad: boolean, size: number) {
@@ -89,7 +100,7 @@ interface Real {
 	root: string;
 }
 
-const reached = { acceptedRows: 0, carriedAcceptances: 0, moves: 0 };
+const reached = { acceptedRows: 0, carriedAcceptances: 0, moves: 0, regressions: 0 };
 
 let workspace: string;
 
@@ -149,12 +160,15 @@ class CopyPreservingMtime implements fc.AsyncCommand<Model, Real> {
 		const source = model.files.get(model.key(this.from))!.instance;
 		source.accepted = false;
 		source.duplicated = true;
+		source.mustHaveHealthyHistory = false;
 		source.rowVerified = false;
 		model.files.set(model.key(this.to), {
 			instance: {
 				...freshInstance(source.bad),
 				duplicated: true,
 				mayBeAccepted: source.mayBeAccepted,
+				mayHaveHealthyHistory: source.mayHaveHealthyHistory,
+				rotted: source.rotted,
 			},
 			name: this.to,
 		});
@@ -184,6 +198,7 @@ class RenameFile implements fc.AsyncCommand<Model, Real> {
 		source.instance.renames++;
 		if (source.instance.duplicated) {
 			source.instance.accepted = false;
+			source.instance.mustHaveHealthyHistory = false;
 			source.instance.rowVerified = false;
 		}
 		model.files.delete(model.key(this.from));
@@ -195,6 +210,31 @@ class RenameFile implements fc.AsyncCommand<Model, Real> {
 	}
 	toString() {
 		return `mv ${this.from} ${this.to}`;
+	}
+}
+
+class RotInPlace implements fc.AsyncCommand<Model, Real> {
+	name: string;
+	constructor(name: string) {
+		this.name = name;
+	}
+	check(model: Readonly<Model>) {
+		const entry = model.files.get(model.key(this.name));
+		return entry !== undefined && !entry.instance.bad && !entry.instance.duplicated;
+	}
+	run(model: Model, real: Real) {
+		const { instance, name } = model.files.get(model.key(this.name))!;
+		const filePath = path.join(real.root, name);
+		const stat = fs.statSync(filePath);
+		writeFlac(filePath, true, stat.size);
+		fs.utimesSync(filePath, stat.atime, stat.mtime);
+		instance.bad = true;
+		instance.rotted = true;
+		instance.rowVerified = false;
+		return Promise.resolve();
+	}
+	toString() {
+		return `rot ${this.name} in place`;
 	}
 }
 
@@ -267,11 +307,31 @@ function checkAcceptance({ instance, name }: ModelFile, row: FileRow) {
 	if (instance.renames > 0) reached.carriedAcceptances++;
 }
 
+function checkHealthyHistory({ instance, name }: ModelFile, row: FileRow) {
+	if (row.last_result === 'healthy') {
+		instance.mayHaveHealthyHistory = true;
+		instance.mustHaveHealthyHistory = true;
+	}
+	if (row.last_healthy_at === null) {
+		expect(instance.mustHaveHealthyHistory, `${name} lost the healthy history it earned`).toBe(
+			false,
+		);
+		return;
+	}
+	expect(
+		instance.mayHaveHealthyHistory,
+		`${name} carries healthy history its bytes never earned`,
+	).toBe(true);
+	if (row.last_result === 'corrupt') reached.regressions++;
+}
+
 function checkVerdict({ instance, name }: ModelFile, row: FileRow, wholeCollection: boolean) {
 	const verdict = instance.bad ? 'corrupt' : 'healthy';
-	const allowed = wholeCollection ? [verdict] : [verdict, 'pending'];
+	const allowed: string[] = [verdict];
+	if (!wholeCollection) allowed.push('pending');
+	if (instance.rotted && (instance.duplicated || !instance.rowVerified)) allowed.push('healthy');
 	expect(allowed, `verdict for ${name}`).toContain(row.last_result);
-	if (row.last_result !== 'pending') instance.rowVerified = true;
+	if (row.last_result === verdict) instance.rowVerified = true;
 }
 
 class Scan implements fc.AsyncCommand<Model, Real> {
@@ -298,6 +358,7 @@ class Scan implements fc.AsyncCommand<Model, Real> {
 			if (row === undefined) continue;
 			checkVerdict(file, row, wholeCollection);
 			checkAcceptance(file, row);
+			checkHealthyHistory(file, row);
 		}
 
 		const rowPaths = real.db.prepare(`SELECT current_path FROM files`).pluck().all() as string[];
@@ -317,6 +378,7 @@ function lifecycleCommands(names: readonly string[]) {
 				.map(([file, bad, size]) => new WriteFile(file, bad, size)),
 			fc.tuple(name, name).map(([from, to]) => new CopyPreservingMtime(from, to)),
 			fc.tuple(name, name).map(([from, to]) => new RenameFile(from, to)),
+			name.map((file) => new RotInPlace(file)),
 			name.map((file) => new DeleteFile(file)),
 			fc.constant(new Accept()),
 			fc.constant(new TimePasses()),
@@ -354,6 +416,27 @@ function moveCommands(names: readonly string[]) {
 	);
 }
 
+function rotCommands(names: readonly string[]) {
+	const name = fc.constantFrom(...names);
+	const rot = name.map((file) => new RotInPlace(file));
+	return fc.commands(
+		[
+			fc
+				.tuple(name, fc.boolean(), fc.constantFrom(4, 5))
+				.map(([file, bad, size]) => new WriteFile(file, bad, size)),
+			rot,
+			rot,
+			fc.tuple(name, name).map(([from, to]) => new RenameFile(from, to)),
+			name.map((file) => new DeleteFile(file)),
+			fc.constant(new Accept()),
+			fc.constant(new TimePasses()),
+			fc.constantFrom(1, 1000).map((batchSize) => new Scan(batchSize)),
+			fc.constant(new Scan(1000)),
+		],
+		{ maxCommands: 20, size: '+1' },
+	);
+}
+
 let runCounter = 0;
 
 async function runLifecycle(commands: Iterable<fc.AsyncCommand<Model, Real>>) {
@@ -386,6 +469,28 @@ async function runLifecycle(commands: Iterable<fc.AsyncCommand<Model, Real>>) {
 	}
 }
 
+let findingCounter = 0;
+function freshCollection() {
+	findingCounter++;
+	const root = path.join(workspace, `finding-${String(findingCounter)}`);
+	fs.mkdirSync(root);
+	const db = new BetterSqlite3(':memory:');
+	initializeSchema(db);
+	const config = makeTestConfig(root, { log_path: `${root}.log`, parallelism: 1 });
+	const rowFor = (name: string) => findFileByPath(db, path.join(root, name));
+	const rowNames = () =>
+		(db.prepare(`SELECT current_path FROM files`).pluck().all() as string[])
+			.map((rowPath) => path.basename(rowPath))
+			.toSorted(byText);
+	return {
+		at: (name: string) => path.join(root, name),
+		db,
+		rowFor,
+		rowNames,
+		scan: () => scanCollection(db, root, config),
+	};
+}
+
 describe('scan lifecycle against a reference model', () => {
 	test.prop([lifecycleCommands(['a.flac', 'A.flac', 'b.flac', 'c.flac'])], { numRuns: 3000 })(
 		'rows are exactly the files, each verdict matches its bytes, and acceptance follows a file that is never duplicated or rewritten through any renames',
@@ -403,29 +508,15 @@ describe('scan lifecycle against a reference model', () => {
 		60_000,
 	);
 
-	describe('former findings', () => {
-		let findingCounter = 0;
-		function freshCollection() {
-			findingCounter++;
-			const root = path.join(workspace, `finding-${String(findingCounter)}`);
-			fs.mkdirSync(root);
-			const db = new BetterSqlite3(':memory:');
-			initializeSchema(db);
-			const config = makeTestConfig(root, { log_path: `${root}.log`, parallelism: 1 });
-			const rowFor = (name: string) => findFileByPath(db, path.join(root, name));
-			const rowNames = () =>
-				(db.prepare(`SELECT current_path FROM files`).pluck().all() as string[])
-					.map((rowPath) => path.basename(rowPath))
-					.toSorted(byText);
-			return {
-				at: (name: string) => path.join(root, name),
-				db,
-				rowFor,
-				rowNames,
-				scan: () => scanCollection(db, root, config),
-			};
-		}
+	test.prop([rotCommands(['a.flac', 'A.flac', 'b.flac'])], { numRuns: 1000 })(
+		'healthy history follows a file that rots in place through renames, and a rescan flags it as a regression',
+		async (commands) => {
+			await runLifecycle(commands);
+		},
+		60_000,
+	);
 
+	describe('former findings', () => {
 		it.runIf(caseInsensitiveTmp)(
 			'a case-only rename keeps accepted corruption quiet and leaves one row',
 			async () => {
@@ -478,9 +569,39 @@ describe('scan lifecycle against a reference model', () => {
 		});
 	});
 
+	describe('regression', () => {
+		it('flags a file that rots in place after verifying healthy, follows it through a move, and forgets a rewritten one', async () => {
+			const collection = freshCollection();
+			writeFlac(collection.at('rots.flac'), false, 4);
+			fs.utimesSync(collection.at('rots.flac'), 1_700_000_001, 1_700_000_001);
+			writeFlac(collection.at('rewritten.flac'), false, 4);
+			fs.utimesSync(collection.at('rewritten.flac'), 1_700_000_002, 1_700_000_002);
+			await collection.scan();
+			const healthyAt = collection.rowFor('rots.flac')?.last_healthy_at;
+
+			writeFlac(collection.at('rots.flac'), true, 4);
+			fs.utimesSync(collection.at('rots.flac'), 1_700_000_001, 1_700_000_001);
+			fs.renameSync(collection.at('rots.flac'), collection.at('moved.flac'));
+			writeFlac(collection.at('rewritten.flac'), true, 4);
+			collection.db.prepare(`UPDATE files SET last_verified_at = '2000-01-01T00:00:00.000Z'`).run();
+			const { newRegressed } = await collection.scan();
+			const moved = collection.rowFor('moved.flac');
+			const rewritten = collection.rowFor('rewritten.flac');
+			const listed = getRegressedFiles(collection.db).map((row) => path.basename(row.current_path));
+			collection.db.close();
+
+			expect(healthyAt).toEqual(expect.any(String));
+			expect(newRegressed).toBe(1);
+			expect(moved).toMatchObject({ last_healthy_at: healthyAt, last_result: 'corrupt' });
+			expect(rewritten).toMatchObject({ last_healthy_at: null, last_result: 'corrupt' });
+			expect(listed).toEqual(['moved.flac']);
+		});
+	});
+
 	it('reached moves and accepted corruption in the runs above, so the property is not vacuous', () => {
 		expect(reached.moves).toBeGreaterThan(0);
 		expect(reached.acceptedRows).toBeGreaterThan(0);
 		expect(reached.carriedAcceptances).toBeGreaterThan(0);
+		expect(reached.regressions).toBeGreaterThan(0);
 	});
 });

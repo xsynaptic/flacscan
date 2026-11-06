@@ -9,6 +9,7 @@ import {
 	getAllUnreadableFiles,
 	getCorruptFiles,
 	getCorruptFilesByAcknowledged,
+	getRegressedFiles,
 	getUnreadableFilesByAcknowledged,
 } from '#database/queries.ts';
 
@@ -22,6 +23,7 @@ interface CorruptJsonEntry {
 	error_timestamp: null | string;
 	file_size: null | number;
 	input_text: string;
+	last_healthy_at: null | string;
 	original_path: string;
 	recovery_attempted_at: null | string;
 	recovery_detail: null | string;
@@ -39,7 +41,7 @@ interface UnreadableJsonEntry {
 	type: 'unreadable';
 }
 
-const VALID_FILTERS = ['accepted', 'new', 'unreadable'] as const;
+const VALID_FILTERS = ['accepted', 'new', 'regressed', 'unreadable'] as const;
 type Filter = (typeof VALID_FILTERS)[number];
 
 function deriveInputText(file: FileRow): string {
@@ -69,6 +71,7 @@ function toCorruptJson(file: FileRow): CorruptJsonEntry {
 		error_timestamp: file.error_timestamp,
 		file_size: file.file_size,
 		input_text: deriveInputText(file),
+		last_healthy_at: file.last_healthy_at,
 		original_path: file.current_path,
 		recovery_attempted_at: file.recovery_attempted_at,
 		recovery_detail: file.recovery_detail,
@@ -93,7 +96,7 @@ export const listCommand = defineCommand({
 	args: {
 		...sharedArguments,
 		filter: {
-			description: 'Filter: new, accepted, unreadable',
+			description: 'Filter: new, accepted, regressed, unreadable',
 			required: false,
 			type: 'positional',
 		},
@@ -125,6 +128,13 @@ export const listCommand = defineCommand({
 				// Keeps the query's byte order; the merged filters below sort with localeCompare
 				writeEntries(
 					getAllUnreadableFiles(db).map((file) => toUnreadableJson(file)),
+					jsonOutput,
+				);
+				return;
+			}
+			if (filter === 'regressed') {
+				writeEntries(
+					getRegressedFiles(db).map((file) => toCorruptJson(file)),
 					jsonOutput,
 				);
 				return;

@@ -4,12 +4,17 @@ import path from 'node:path';
 export function logCorruption(
 	logPath: string,
 	filePath: string,
-	{ details, known }: { details: string; known: boolean },
+	{
+		details,
+		known,
+		lastHealthyAt,
+	}: { details: string; known: boolean; lastHealthyAt: null | string },
 ) {
 	appendEntry(logPath, {
 		details,
 		event: 'corrupt',
 		known,
+		last_healthy_at: lastHealthyAt,
 		level: 'error',
 		path: filePath,
 	});
@@ -57,7 +62,14 @@ export function logFixFailed(
 
 export function logScanComplete(
 	logPath: string,
-	stats: { corrupt: number; healthy: number; newCorrupt: number; pruned: number; total: number },
+	stats: {
+		corrupt: number;
+		healthy: number;
+		newCorrupt: number;
+		newRegressed: number;
+		pruned: number;
+		total: number;
+	},
 ) {
 	appendEntry(logPath, {
 		event: 'scan_complete',

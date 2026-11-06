@@ -46,16 +46,17 @@ function insertFile(overrides: {
 	file_mtime?: null | string;
 	file_size?: null | number;
 	first_seen_at?: string;
+	last_healthy_at?: null | string;
 	last_result?: FileStatus;
 	last_verified_at?: null | string;
 	updated_at?: string;
 }) {
 	const now = new Date().toISOString();
 	db.prepare(
-		`INSERT INTO files (current_path, last_result, last_verified_at, acknowledged_at,
+		`INSERT INTO files (current_path, last_result, last_verified_at, last_healthy_at, acknowledged_at,
 		error_severity, error_output, file_size, file_mtime, first_seen_at, updated_at)
-		VALUES (@current_path, @last_result, @last_verified_at, @acknowledged_at, @error_severity,
-		@error_output, @file_size, @file_mtime, @first_seen_at, @updated_at)`,
+		VALUES (@current_path, @last_result, @last_verified_at, @last_healthy_at, @acknowledged_at,
+		@error_severity, @error_output, @file_size, @file_mtime, @first_seen_at, @updated_at)`,
 	).run({
 		acknowledged_at: null,
 		current_path: '/music/test.flac',
@@ -64,6 +65,7 @@ function insertFile(overrides: {
 		file_mtime: null,
 		file_size: null,
 		first_seen_at: now,
+		last_healthy_at: null,
 		last_result: 'pending',
 		last_verified_at: null,
 		updated_at: now,
@@ -78,9 +80,11 @@ describe('getStats', () => {
 			corrupt: 0,
 			healthy: 0,
 			newCorrupt: 0,
+			newRegressed: 0,
 			newUnreadable: 0,
 			pending: 0,
 			recoveryBreakdown: [],
+			regressed: 0,
 			total: 0,
 			unreadable: 0,
 		});
@@ -101,6 +105,29 @@ describe('getStats', () => {
 		expect(stats.healthy).toBe(2);
 		expect(stats.corrupt).toBe(1);
 		expect(stats.total).toBe(4);
+	});
+
+	it('counts regressed corrupt files, split by acceptance, ignoring healthy history on healthy rows', () => {
+		const lastHealthy = '2025-06-01T00:00:00.000Z';
+		insertFile({
+			current_path: '/music/a.flac',
+			last_healthy_at: lastHealthy,
+			last_result: 'corrupt',
+		});
+		insertFile({
+			acknowledged_at: '2026-01-01T00:00:00.000Z',
+			current_path: '/music/b.flac',
+			last_healthy_at: lastHealthy,
+			last_result: 'corrupt',
+		});
+		insertFile({ current_path: '/music/c.flac', last_result: 'corrupt' });
+		insertFile({
+			current_path: '/music/d.flac',
+			last_healthy_at: lastHealthy,
+			last_result: 'healthy',
+		});
+
+		expect(getStats(db)).toMatchObject({ newRegressed: 1, regressed: 2 });
 	});
 
 	it('includes unreadable count', () => {
@@ -181,6 +208,28 @@ describe('acknowledgement', () => {
 		expect(row?.last_result).toBe('pending');
 	});
 
+	it('stamps healthy history on a healthy verdict, keeps it through corrupt ones, and drops it on a content change', () => {
+		insertFile({
+			current_path: '/music/a.flac',
+			file_mtime: '2020-01-01T00:00:00.000Z',
+			file_size: 1,
+		});
+
+		updateVerificationResult(db, '/music/a.flac', { last_result: 'healthy' });
+		const healthy = findFileByPath(db, '/music/a.flac');
+		expect(healthy?.last_healthy_at).toBe(healthy?.last_verified_at);
+
+		updateVerificationResult(db, '/music/a.flac', { last_result: 'corrupt' });
+		expect(findFileByPath(db, '/music/a.flac')?.last_healthy_at).toBe(healthy?.last_healthy_at);
+
+		upsertFile(db, {
+			current_path: '/music/a.flac',
+			file_mtime: '2026-01-01T00:00:00.000Z',
+			file_size: 2,
+		});
+		expect(findFileByPath(db, '/music/a.flac')?.last_healthy_at).toBeNull();
+	});
+
 	it('upsertUnreadableFile keeps the stamp across re-upserts', () => {
 		upsertUnreadableFile(db, { current_path: '/bad/x.flac', error_output: 'first' });
 		acknowledgeAllIssues(db);
@@ -217,39 +266,44 @@ describe('acknowledgement', () => {
 	});
 });
 
+function legacyDatabase() {
+	const legacy = new BetterSqlite3(':memory:');
+	// Schema from before acknowledged_at existed
+	legacy.exec(`
+		CREATE TABLE files (
+			current_path    TEXT PRIMARY KEY,
+			last_verified_at TEXT,
+			last_result     TEXT NOT NULL DEFAULT 'pending',
+			error_severity  TEXT,
+			error_output    TEXT,
+			error_timestamp TEXT,
+			artist          TEXT,
+			title           TEXT,
+			album           TEXT,
+			date            TEXT,
+			duration        REAL,
+			file_size       INTEGER,
+			file_mtime      TEXT,
+			recovery_attempted_at TEXT,
+			recovery_result       TEXT,
+			recovery_lost_samples INTEGER,
+			recovery_detail       TEXT,
+			first_seen_at   TEXT NOT NULL,
+			updated_at      TEXT NOT NULL
+		);
+		CREATE TABLE unreadable_files (
+			current_path  TEXT PRIMARY KEY,
+			error_output  TEXT NOT NULL,
+			first_seen_at TEXT NOT NULL,
+			updated_at    TEXT NOT NULL
+		);
+	`);
+	return legacy;
+}
+
 describe('schema migration', () => {
 	it('adds acknowledged_at to a database created without it', () => {
-		const legacy = new BetterSqlite3(':memory:');
-		// Schema from before acknowledged_at existed
-		legacy.exec(`
-			CREATE TABLE files (
-				current_path    TEXT PRIMARY KEY,
-				last_verified_at TEXT,
-				last_result     TEXT NOT NULL DEFAULT 'pending',
-				error_severity  TEXT,
-				error_output    TEXT,
-				error_timestamp TEXT,
-				artist          TEXT,
-				title           TEXT,
-				album           TEXT,
-				date            TEXT,
-				duration        REAL,
-				file_size       INTEGER,
-				file_mtime      TEXT,
-				recovery_attempted_at TEXT,
-				recovery_result       TEXT,
-				recovery_lost_samples INTEGER,
-				recovery_detail       TEXT,
-				first_seen_at   TEXT NOT NULL,
-				updated_at      TEXT NOT NULL
-			);
-			CREATE TABLE unreadable_files (
-				current_path  TEXT PRIMARY KEY,
-				error_output  TEXT NOT NULL,
-				first_seen_at TEXT NOT NULL,
-				updated_at    TEXT NOT NULL
-			);
-		`);
+		const legacy = legacyDatabase();
 
 		initializeSchema(legacy);
 
@@ -262,6 +316,29 @@ describe('schema migration', () => {
 		expect(fileCols).toContain('acknowledged_at');
 		expect(unreadableCols).toContain('acknowledged_at');
 		legacy.close();
+	});
+
+	it('backfills last_healthy_at from the last verification of healthy rows only', () => {
+		const legacy = legacyDatabase();
+		const insert = legacy.prepare(
+			`INSERT INTO files (current_path, last_result, last_verified_at, first_seen_at, updated_at)
+			VALUES (?, ?, ?, 't', 't')`,
+		);
+		insert.run('/music/healthy.flac', 'healthy', '2026-03-01T00:00:00.000Z');
+		insert.run('/music/corrupt.flac', 'corrupt', '2026-03-02T00:00:00.000Z');
+		insert.run('/music/pending.flac', 'pending', null);
+
+		initializeSchema(legacy);
+
+		const backfilled = legacy
+			.prepare(`SELECT current_path, last_healthy_at FROM files ORDER BY current_path`)
+			.all();
+		legacy.close();
+		expect(backfilled).toEqual([
+			{ current_path: '/music/corrupt.flac', last_healthy_at: null },
+			{ current_path: '/music/healthy.flac', last_healthy_at: '2026-03-01T00:00:00.000Z' },
+			{ current_path: '/music/pending.flac', last_healthy_at: null },
+		]);
 	});
 });
 

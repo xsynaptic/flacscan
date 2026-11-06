@@ -1,5 +1,11 @@
 # flacscan
 
+## 4.3.0
+
+### Minor Changes
+
+- Flag regressions, files that turn up corrupt after verifying healthy with no content change in between: `REGRESSED` in `scan` and `recheck`, a count in `status` and the `--notify` banner, a tag in `report`, `list regressed`, and `last_healthy_at` in the log and `list --json`; existing healthy rows are backfilled on upgrade. `recheck` now writes the same `corrupt`, ID3 and `unreadable` log events as `scan`
+
 ## 4.2.0
 
 ### Minor Changes

@@ -9,6 +9,8 @@ import { directoryPrefix } from '#paths.ts';
 // Re-preparing on every call dominates discovery cost on large collections
 const statementCaches = new WeakMap<Database.Database, Map<string, Database.Statement>>();
 
+const regressedClause = `last_result = 'corrupt' AND last_healthy_at IS NOT NULL`;
+
 export function acknowledgeAllIssues(database: Database.Database): {
 	corrupt: number;
 	unreadable: number;
@@ -180,6 +182,11 @@ export function getStats(database: Database.Database) {
 		).get() as { count: number }
 	).count;
 
+	const regressed = prepareCached(
+		database,
+		`SELECT COUNT(*) AS total, COUNT(*) FILTER (WHERE acknowledged_at IS NULL) AS new FROM files WHERE ${regressedClause}`,
+	).get() as { new: number; total: number };
+
 	const recoveryBreakdown = prepareCached(
 		database,
 		`SELECT recovery_result, COUNT(*) as count FROM files WHERE last_result = 'corrupt' GROUP BY recovery_result`,
@@ -189,12 +196,21 @@ export function getStats(database: Database.Database) {
 		corrupt: countsByResult.corrupt ?? 0,
 		healthy: countsByResult.healthy ?? 0,
 		newCorrupt,
+		newRegressed: regressed.new,
 		newUnreadable,
 		pending: countsByResult.pending ?? 0,
 		recoveryBreakdown,
+		regressed: regressed.total,
 		total,
 		unreadable,
 	};
+}
+
+export function getRegressedFiles(database: Database.Database): FileRow[] {
+	return prepareCached(
+		database,
+		`SELECT * FROM files WHERE ${regressedClause} ORDER BY current_path`,
+	).all() as FileRow[];
 }
 
 export function getUnreadableFilesByAcknowledged(
@@ -274,29 +290,27 @@ export function updateVerificationResult(
 		last_result: FileStatus;
 	},
 ) {
-	const now = new Date().toISOString();
 	prepareCached(
 		database,
 		`
     UPDATE files SET
-      last_verified_at = ?,
-      last_result = ?,
-      acknowledged_at = CASE WHEN ? = 'healthy' THEN NULL ELSE acknowledged_at END,
+      last_verified_at = @now,
+      last_result = @lastResult,
+      last_healthy_at = CASE WHEN @lastResult = 'healthy' THEN @now ELSE last_healthy_at END,
+      acknowledged_at = CASE WHEN @lastResult = 'healthy' THEN NULL ELSE acknowledged_at END,
       error_severity = NULL,
-      error_output = ?,
-      error_timestamp = ?,
-      updated_at = ?
-    WHERE current_path = ?
+      error_output = @errorOutput,
+      error_timestamp = @errorTimestamp,
+      updated_at = @now
+    WHERE current_path = @currentPath
   `,
-	).run(
-		now,
-		result.last_result,
-		result.last_result,
-		result.error_output ?? null,
-		result.error_timestamp ?? null,
-		now,
+	).run({
 		currentPath,
-	);
+		errorOutput: result.error_output ?? null,
+		errorTimestamp: result.error_timestamp ?? null,
+		lastResult: result.last_result,
+		now: new Date().toISOString(),
+	});
 }
 
 export function upsertFile(
@@ -320,6 +334,7 @@ export function upsertFile(
       -- changed bytes are a new episode: re-verify from scratch and drop any acknowledgement
       last_result = 'pending',
       last_verified_at = NULL,
+      last_healthy_at = NULL,
       acknowledged_at = NULL
   `,
 	).run(file.current_path, file.file_size, file.file_mtime, now, now);

@@ -15,6 +15,7 @@ beforeEach(() => {
 	tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'flacscan-test-'));
 	fs.writeFileSync(path.join(tempDir, 'flacscan.config.yaml'), `directories:\n  - ${tempDir}\n`);
 	output = [];
+	vi.spyOn(process.stdout, 'on').mockReturnValue(process.stdout);
 	vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
 		output.push(String(chunk));
 		return true;
@@ -28,15 +29,17 @@ afterEach(() => {
 });
 
 const accepted = '2026-01-01T00:00:00.000Z';
+const lastHealthy = '2025-06-01T00:00:00.000Z';
 
 function seed() {
 	const db = openDatabase(path.join(tempDir, 'flacscan.db'));
-	const insertCorrupt = db.prepare(
-		`INSERT INTO files (current_path, last_result, acknowledged_at, first_seen_at, updated_at)
-		VALUES (?, 'corrupt', ?, 't', 't')`,
+	const insertFile = db.prepare(
+		`INSERT INTO files (current_path, last_result, acknowledged_at, last_healthy_at, first_seen_at, updated_at)
+		VALUES (?, ?, ?, ?, 't', 't')`,
 	);
-	insertCorrupt.run('/m/beta/c.flac', null);
-	insertCorrupt.run('/m/Alpha/c.flac', accepted);
+	insertFile.run('/m/beta/c.flac', 'corrupt', null, null);
+	insertFile.run('/m/Alpha/c.flac', 'corrupt', accepted, lastHealthy);
+	insertFile.run('/m/Alpha/ok.flac', 'healthy', null, lastHealthy);
 	for (const currentPath of ['/m/Beta/u.flac', '/m/alpha/u.flac', '/m/Zulu/u.flac']) {
 		upsertUnreadableFile(db, { current_path: currentPath, error_output: 'read error' });
 	}
@@ -74,6 +77,7 @@ const cases = [
 	},
 	{ expected: ['/m/beta/c.flac', '/m/Beta/u.flac', '/m/Zulu/u.flac'], filter: ['new'] },
 	{ expected: ['/m/Alpha/c.flac', '/m/alpha/u.flac'], filter: ['accepted'] },
+	{ expected: ['/m/Alpha/c.flac'], filter: ['regressed'] },
 	{ expected: ['/m/Beta/u.flac', '/m/Zulu/u.flac', '/m/alpha/u.flac'], filter: ['unreadable'] },
 ];
 

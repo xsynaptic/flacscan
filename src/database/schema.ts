@@ -4,6 +4,7 @@ const CREATE_FILES_TABLE = `
 CREATE TABLE IF NOT EXISTS files (
   current_path    TEXT PRIMARY KEY,
   last_verified_at TEXT,
+  last_healthy_at TEXT,
   last_result     TEXT NOT NULL DEFAULT 'pending',
   error_severity  TEXT,
   error_output    TEXT,
@@ -69,6 +70,14 @@ function applyMigrations(database: Database.Database) {
 	}
 	if (!existing.has('recovery_lost_samples')) {
 		database.exec(`ALTER TABLE files ADD COLUMN recovery_lost_samples INTEGER`);
+	}
+	if (!existing.has('last_healthy_at')) {
+		database.transaction(() => {
+			database.exec(`ALTER TABLE files ADD COLUMN last_healthy_at TEXT`);
+			database.exec(
+				`UPDATE files SET last_healthy_at = last_verified_at WHERE last_result = 'healthy'`,
+			);
+		})();
 	}
 
 	const unreadableColumns = database.pragma('table_info(unreadable_files)') as {

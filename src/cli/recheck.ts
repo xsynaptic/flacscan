@@ -8,7 +8,7 @@ import ora from 'ora';
 
 import type { FileRow, UnreadableFileRow } from '#database/types.ts';
 
-import { printCorruptFile } from '#cli/format-corrupt.ts';
+import { corruptSummary, printCorruptFile } from '#cli/format-corrupt.ts';
 import { installShutdownHandler, isShuttingDown, processPool } from '#cli/process-pool.ts';
 import { runCommand } from '#cli/run-command.ts';
 import { sharedArguments } from '#cli/shared-arguments.ts';
@@ -23,6 +23,7 @@ import {
 	upsertUnreadableFile,
 } from '#database/queries.ts';
 import { checkMountedPaths } from '#discovery.ts';
+import { logUnreadable } from '#logging/scan-log.ts';
 import { directoryPrefix, existsAsSpelled } from '#paths.ts';
 import { ensureBinary } from '#shell.ts';
 import { flacVerifier } from '#verifiers/flac/verify.ts';
@@ -32,6 +33,7 @@ type RecheckItem =
 
 interface RecheckRun {
 	db: Database.Database;
+	logPath: string;
 	spinner: Ora;
 	stats: RecheckStats;
 }
@@ -40,6 +42,7 @@ interface RecheckStats {
 	corrupt: number;
 	healthy: number;
 	newCorrupt: number;
+	newRegressed: number;
 	pruned: number;
 }
 
@@ -87,8 +90,14 @@ export const recheckCommand = defineCommand({
 					text: `Rechecking: 0/${String(items.length)} files`,
 				}).start();
 
-				const stats: RecheckStats = { corrupt: 0, healthy: 0, newCorrupt: 0, pruned: 0 };
-				const run: RecheckRun = { db, spinner, stats };
+				const stats: RecheckStats = {
+					corrupt: 0,
+					healthy: 0,
+					newCorrupt: 0,
+					newRegressed: 0,
+					pruned: 0,
+				};
+				const run: RecheckRun = { db, logPath: config.log_path, spinner, stats };
 				let processed = 0;
 
 				await processPool(items, config.parallelism, async (item) => {
@@ -98,19 +107,14 @@ export const recheckCommand = defineCommand({
 				});
 
 				const total = stats.healthy + stats.corrupt + stats.pruned;
-				const corruptSummary =
-					stats.corrupt > 0
-						? `${String(stats.corrupt)} corrupt (${String(stats.newCorrupt)} new)`
-						: '0 corrupt';
+				const counts = `${String(stats.healthy)} healthy, ${corruptSummary(stats)}, ${String(stats.pruned)} pruned.`;
 
 				if (isShuttingDown()) {
 					spinner.warn(
-						`Recheck interrupted: ${String(processed)}/${String(items.length)} files. ${String(stats.healthy)} healthy, ${corruptSummary}, ${String(stats.pruned)} pruned.`,
+						`Recheck interrupted: ${String(processed)}/${String(items.length)} files. ${counts}`,
 					);
 				} else {
-					spinner.succeed(
-						`Rechecked ${String(total)} files. ${String(stats.healthy)} healthy, ${corruptSummary}, ${String(stats.pruned)} pruned.`,
-					);
+					spinner.succeed(`Rechecked ${String(total)} files. ${counts}`);
 				}
 
 				process.exitCode = stats.newCorrupt > 0 ? 1 : 0;
@@ -119,12 +123,13 @@ export const recheckCommand = defineCommand({
 	},
 });
 
-function promoteUnreadable(db: Database.Database, filePath: string): FileRow | undefined {
+function promoteUnreadable({ db, logPath }: RecheckRun, filePath: string): FileRow | undefined {
 	let stat: fs.Stats;
 	try {
 		stat = fs.statSync(filePath);
 	} catch (error) {
 		upsertUnreadableFile(db, { current_path: filePath, error_output: String(error) });
+		logUnreadable(logPath, filePath, String(error));
 		return undefined;
 	}
 	upsertFile(db, {
@@ -149,7 +154,7 @@ function pruneItem({ db, spinner, stats }: RecheckRun, item: RecheckItem) {
 }
 
 async function recheckOne(run: RecheckRun, item: RecheckItem): Promise<boolean> {
-	const { db, spinner, stats } = run;
+	const { db, logPath, spinner, stats } = run;
 	const filePath = item.row.current_path;
 
 	if (!existsAsSpelled(filePath)) {
@@ -157,17 +162,18 @@ async function recheckOne(run: RecheckRun, item: RecheckItem): Promise<boolean> 
 		return true;
 	}
 
-	const file = item.source === 'files' ? item.row : promoteUnreadable(db, filePath);
+	const file = item.source === 'files' ? item.row : promoteUnreadable(run, filePath);
 	if (!file) return false;
 
-	const outcome = await verifyAndRecord({ db, fix: false, verifier: flacVerifier }, file);
+	const outcome = await verifyAndRecord({ db, fix: false, logPath, verifier: flacVerifier }, file);
 	if (outcome.kind === 'interrupted') return false;
 
 	if (outcome.kind === 'corrupt') {
-		const isKnown = item.source === 'files' && item.row.acknowledged_at !== null;
+		printCorruptFile(spinner, filePath, outcome);
 		stats.corrupt++;
-		if (!isKnown) stats.newCorrupt++;
-		printCorruptFile(spinner, filePath, { ...outcome, known: isKnown });
+		if (outcome.known) return true;
+		stats.newCorrupt++;
+		if (outcome.lastHealthyAt !== null) stats.newRegressed++;
 		return true;
 	}
 

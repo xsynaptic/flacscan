@@ -6,15 +6,13 @@ import ora from 'ora';
 import { installShutdownHandler, isShuttingDown } from '#cli/process-pool.ts';
 import { runCommand } from '#cli/run-command.ts';
 import { runDiscovery } from '#cli/scan-discover.ts';
-import { runVerification } from '#cli/scan-verify.ts';
+import { emptyVerificationStats, runVerification } from '#cli/scan-verify.ts';
 import { sharedArguments } from '#cli/shared-arguments.ts';
 import { discoverFiles } from '#discovery.ts';
 import { logScanComplete, logScanStart } from '#logging/scan-log.ts';
 import { sendNotification } from '#notify.ts';
 import { ensureBinary } from '#shell.ts';
 import { flacVerifier } from '#verifiers/flac/verify.ts';
-
-const noVerification = { corrupt: 0, exitCode: 0, fixed: 0, healthy: 0, newCorrupt: 0, pruned: 0 };
 
 function reportWalk(spinner: Ora, walk: Awaited<ReturnType<typeof discoverFiles>>) {
 	const { files, incomplete, mountCheck } = walk;
@@ -101,13 +99,14 @@ export const scanCommand = defineCommand({
 					(await runVerification(db, config, {
 						directories: mountCheck.available,
 						verifier: flacVerifier,
-					})) ?? noVerification;
+					})) ?? emptyVerificationStats();
 
 				const pruned = discoveryStats.pruned + verificationStats.pruned;
 				logScanComplete(config.log_path, {
 					corrupt: verificationStats.corrupt,
 					healthy: verificationStats.healthy,
 					newCorrupt: verificationStats.newCorrupt,
+					newRegressed: verificationStats.newRegressed,
 					pruned,
 					total:
 						verificationStats.healthy +
@@ -117,9 +116,13 @@ export const scanCommand = defineCommand({
 				});
 
 				if (config.notify && verificationStats.newCorrupt > 0) {
+					const regressed =
+						verificationStats.newRegressed > 0
+							? ` (${String(verificationStats.newRegressed)} regressed)`
+							: '';
 					await sendNotification(
 						'flacscan',
-						`${String(verificationStats.newCorrupt)} new corrupt file(s) found. Run "flacscan report" for details.`,
+						`${String(verificationStats.newCorrupt)} new corrupt file(s) found${regressed}. Run "flacscan report" for details.`,
 					);
 				}
 

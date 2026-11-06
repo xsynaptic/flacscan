@@ -87,6 +87,7 @@ export const reportCommand = defineCommand({
 function corruptDetails(file: FileRow): string[] {
 	const details: string[] = [];
 	if (file.error_timestamp) details.push(`      Glitch at: ${file.error_timestamp}`);
+	if (file.last_healthy_at) details.push(`      Last healthy: ${file.last_healthy_at}`);
 	if (file.last_verified_at) details.push(`      Last verified: ${file.last_verified_at}`);
 	if (file.acknowledged_at) details.push(`      Accepted: ${file.acknowledged_at}`);
 	if (file.recovery_result) details.push(recoveryLine(file, file.recovery_result));
@@ -99,7 +100,7 @@ function corruptSection(c: Palette, heading: string, files: FileRow[]): string[]
 	return [
 		c.bold(`  ${heading} (${String(files.length)}):\n`),
 		...files.flatMap((file) => [
-			`    ${c.red('[corrupt]')} ${file.current_path}`,
+			`    ${c.red(file.last_healthy_at ? '[regressed]' : '[corrupt]')} ${file.current_path}`,
 			...corruptDetails(file),
 			'',
 		]),

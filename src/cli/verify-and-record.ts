@@ -7,6 +7,7 @@ import type { FormatVerifier, VerificationResult } from '#verifiers/types.ts';
 
 import { isShuttingDown } from '#cli/process-pool.ts';
 import { updateMetadata, updateVerificationResult, upsertFile } from '#database/queries.ts';
+import { logCorruption, logFixApplied, logFixDetected, logFixFailed } from '#logging/scan-log.ts';
 import { extractMetadata } from '#metadata.ts';
 
 type FixAnnotation =
@@ -20,8 +21,11 @@ type Repair =
 interface VerifyContext {
 	db: Database.Database;
 	fix: boolean;
+	logPath: string;
 	verifier: FormatVerifier;
 }
+
+export type CorruptOutcome = Extract<VerifyOutcome, { kind: 'corrupt' }>;
 
 export type VerifyOutcome =
 	| {
@@ -29,6 +33,8 @@ export type VerifyOutcome =
 			errorTimestamp: null | string;
 			fix?: FixAnnotation;
 			kind: 'corrupt';
+			known: boolean;
+			lastHealthyAt: null | string;
 	  }
 	| { kind: 'fixed'; label: string }
 	| { kind: 'healthy' }
@@ -52,21 +58,29 @@ export async function verifyAndRecord(
 	const repair = await repairOrAnnotate(context, filePath, result.errorOutput);
 	if (repair.kind !== 'unrepaired') return repair;
 
-	await recordCorrupt(db, file, result);
+	recordCorrupt(context, file, result);
+	await refreshMissingMetadata(db, file);
 	return {
 		errorOutput: result.errorOutput,
 		errorTimestamp: result.errorTimestamp,
 		kind: 'corrupt',
+		known: isKnown(file),
+		lastHealthyAt: file.last_healthy_at,
 		...(repair.annotation && { fix: repair.annotation }),
 	};
+}
+
+// Pre-verification row: acknowledged means this corruption was already triaged
+function isKnown(file: FileRow): boolean {
+	return file.acknowledged_at !== null;
 }
 
 function isMetadataEmpty(file: FileRow): boolean {
 	return !file.artist && !file.title && !file.album && !file.date && !file.duration;
 }
 
-async function recordCorrupt(
-	db: Database.Database,
+function recordCorrupt(
+	{ db, logPath }: VerifyContext,
 	file: FileRow,
 	result: Extract<VerificationResult, { status: 'corrupt' }>,
 ) {
@@ -76,7 +90,14 @@ async function recordCorrupt(
 		error_timestamp: result.errorTimestamp,
 		last_result: 'corrupt',
 	});
+	logCorruption(logPath, file.current_path, {
+		details: result.errorOutput.replaceAll('\n', ' '),
+		known: isKnown(file),
+		lastHealthyAt: file.last_healthy_at,
+	});
+}
 
+async function refreshMissingMetadata(db: Database.Database, file: FileRow) {
 	if (!isMetadataEmpty(file)) return;
 	const metadata = await extractMetadata(file.current_path);
 	if (metadata) updateMetadata(db, file.current_path, metadata);
@@ -100,25 +121,28 @@ function recordFixed(db: Database.Database, filePath: string): boolean {
 }
 
 async function repairOrAnnotate(
-	{ db, fix, verifier }: VerifyContext,
+	{ db, fix, logPath, verifier }: VerifyContext,
 	filePath: string,
 	errorOutput: string,
 ): Promise<Repair> {
 	const fixer = verifier.fixer;
 	if (!fixer?.detect(errorOutput)) return { kind: 'unrepaired' };
-	if (!fix) return { annotation: { label: fixer.label, state: 'detected' }, kind: 'unrepaired' };
+	if (!fix) {
+		logFixDetected(logPath, filePath, fixer.label);
+		return { annotation: { label: fixer.label, state: 'detected' }, kind: 'unrepaired' };
+	}
 
 	const fixResult = await fixer.fix(filePath);
 	if (!fixResult.ok) {
-		return {
-			annotation: { error: fixResult.error ?? 'unknown', label: fixer.label, state: 'failed' },
-			kind: 'unrepaired',
-		};
+		const error = fixResult.error ?? 'unknown';
+		logFixFailed(logPath, filePath, { error, label: fixer.label });
+		return { annotation: { error, label: fixer.label, state: 'failed' }, kind: 'unrepaired' };
 	}
 
 	const recheck = await verifier.verify(filePath);
 	if (recheck.status !== 'healthy') return { kind: 'unrepaired' };
 	if (!recordFixed(db, filePath)) return { kind: 'interrupted' };
+	logFixApplied(logPath, filePath, fixer.label);
 	return { kind: 'fixed', label: fixer.label };
 }
 

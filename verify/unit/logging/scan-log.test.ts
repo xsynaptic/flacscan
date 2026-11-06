@@ -31,7 +31,11 @@ describe('scan-log', () => {
 	it('writes one parseable corruption line', () => {
 		const logPath = uniqueLogPath('a.log');
 
-		logCorruption(logPath, '/music/bad.flac', { details: 'decode error', known: false });
+		logCorruption(logPath, '/music/bad.flac', {
+			details: 'decode error',
+			known: false,
+			lastHealthyAt: null,
+		});
 
 		const lines = readLines(logPath);
 		expect(lines).toHaveLength(1);
@@ -40,6 +44,7 @@ describe('scan-log', () => {
 			details: 'decode error',
 			event: 'corrupt',
 			known: false,
+			last_healthy_at: null,
 			level: 'error',
 			path: '/music/bad.flac',
 		});
@@ -50,19 +55,31 @@ describe('scan-log', () => {
 	it('appends a separate line per call', () => {
 		const logPath = uniqueLogPath('b.log');
 
-		logCorruption(logPath, '/music/one.flac', { details: 'first', known: false });
-		logCorruption(logPath, '/music/two.flac', { details: 'second', known: true });
+		logCorruption(logPath, '/music/one.flac', {
+			details: 'first',
+			known: false,
+			lastHealthyAt: null,
+		});
+		logCorruption(logPath, '/music/two.flac', {
+			details: 'second',
+			known: true,
+			lastHealthyAt: '2026-08-01T00:00:00.000Z',
+		});
 
 		const lines = readLines(logPath);
 		expect(lines).toHaveLength(2);
 		expect(parseLine(lines[0] ?? '').path).toBe('/music/one.flac');
-		expect(parseLine(lines[1] ?? '')).toMatchObject({ known: true, path: '/music/two.flac' });
+		expect(parseLine(lines[1] ?? '')).toMatchObject({
+			known: true,
+			last_healthy_at: '2026-08-01T00:00:00.000Z',
+			path: '/music/two.flac',
+		});
 	});
 
 	it('creates the parent directory when missing', () => {
 		const logPath = uniqueLogPath('nested', 'deeper', 'c.log');
 
-		logCorruption(logPath, '/music/x.flac', { details: 'boom', known: false });
+		logCorruption(logPath, '/music/x.flac', { details: 'boom', known: false, lastHealthyAt: null });
 
 		expect(fs.existsSync(logPath)).toBe(true);
 	});
@@ -85,7 +102,14 @@ describe('scan-log', () => {
 		const logPath = uniqueLogPath('d.log');
 
 		logScanStart(logPath, { available: 2, skipped: ['/Volumes/Gone'], total: 3 });
-		logScanComplete(logPath, { corrupt: 1, healthy: 9, newCorrupt: 1, pruned: 2, total: 12 });
+		logScanComplete(logPath, {
+			corrupt: 1,
+			healthy: 9,
+			newCorrupt: 1,
+			newRegressed: 1,
+			pruned: 2,
+			total: 12,
+		});
 
 		const lines = readLines(logPath);
 		const start = parseLine(lines[0] ?? '');
@@ -96,7 +120,7 @@ describe('scan-log', () => {
 		});
 		expect(complete).toMatchObject({
 			event: 'scan_complete',
-			stats: { corrupt: 1, healthy: 9, newCorrupt: 1, pruned: 2, total: 12 },
+			stats: { corrupt: 1, healthy: 9, newCorrupt: 1, newRegressed: 1, pruned: 2, total: 12 },
 		});
 	});
 });

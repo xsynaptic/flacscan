@@ -11,6 +11,7 @@ export interface FileRow {
 	file_mtime: null | string;
 	file_size: null | number;
 	first_seen_at: string;
+	last_healthy_at: null | string;
 	last_result: FileStatus;
 	last_verified_at: null | string;
 	recovery_attempted_at: null | string;

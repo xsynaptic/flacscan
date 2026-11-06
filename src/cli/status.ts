@@ -47,6 +47,7 @@ export const statusCommand = defineCommand({
 
 function printCounts(stats: Stats) {
 	const corruptColor = stats.newCorrupt > 0 ? chalk.red : plain;
+	const regressedColor = stats.newRegressed > 0 ? chalk.red : plain;
 	const unreadableColor = stats.newUnreadable > 0 ? chalk.red : plain;
 
 	console.log(`  Total files:      ${chalk.bold(String(stats.total))}`);
@@ -54,6 +55,11 @@ function printCounts(stats: Stats) {
 	console.log(
 		`  Corrupt:          ${corruptColor(String(stats.corrupt))} (${String(stats.newCorrupt)} new, ${String(stats.corrupt - stats.newCorrupt)} accepted)`,
 	);
+	if (stats.regressed > 0) {
+		console.log(
+			`  Regressed:        ${regressedColor(String(stats.regressed))} (${String(stats.newRegressed)} new, ${String(stats.regressed - stats.newRegressed)} accepted)`,
+		);
+	}
 	console.log(`  Pending:          ${String(stats.pending)}`);
 	console.log(
 		`  Unreadable:       ${unreadableColor(String(stats.unreadable))} (${String(stats.newUnreadable)} new, ${String(stats.unreadable - stats.newUnreadable)} accepted)`,
