@@ -72,18 +72,18 @@ Every command accepts:
 
 ### Exit codes
 
-| Code | Meaning                                    |
-| ---- | ------------------------------------------ |
-| 0    | Clean run                                  |
-| 1    | New corruption detected (not yet accepted) |
-| 2    | Tool error (bad config, missing binaries)  |
+| Code | Meaning                                                               |
+| ---- | --------------------------------------------------------------------- |
+| 0    | Clean run                                                             |
+| 1    | New corruption detected (not yet accepted)                            |
+| 2    | Tool error (bad config, missing binaries, another run holds the lock) |
 
 ## How it works
 
 Each `flacscan` invocation:
 
 1. Walks configured directories, skipping unmounted/unavailable paths; this is so you can include external drives without needing to concern yourself about whether they're connected at the time of the scan
-2. **Discovery** - stats every `.flac` file, caches modified time and size in SQLite; unchanged files are skipped
+2. **Discovery** - stats every `.flac` file, caches modified time and size in SQLite; unchanged files are skipped, moves are carried over, and rows for missing files are pruned
 3. **Verification** - selects a batch of files due for verification (never-verified first, then oldest-first) and runs `flac -t` on each at `nice -n 19` priority
 4. Logs corruption, unreadable files, and ID3 issues to an append-only log file
 
@@ -108,10 +108,11 @@ An initial scan of a large collection often finds standing damage (files that ar
 
 ### Trade-offs
 
-- **Path-keyed database** - files are tracked by their full path. A rename or move is migrated in place when it's unambiguous (same size and mtime, exactly one candidate row, and the old path is gone from a mounted volume), carrying the file's verdict and acknowledgement to the new path. Ambiguous cases (duplicate size+mtime, or the old path on an offline volume) fall back to a new file plus a stale entry, which `recheck` prunes once the old path no longer exists.
+- **Path-keyed database** - files are tracked by their exact path, and configured directories are matched in their on-disk case. A renamed or moved file keeps its row, verdict and acceptance included, when exactly one row with the same size and mtime has lost its file and no other new path claims it; otherwise it is a new file. Each scan prunes rows for files missing from a directory it walked completely, so a file moved to an offline volume is verified again as new once that volume is back.
 - **Batch model** - designed for low, predictable resource usage rather than scanning everything at once. A single run touches at most `batch_size` files.
 - **No metadata extraction during discovery** - discovery only checks mtime/size via `stat`, not FLAC headers (artist/title/etc. are read later, only for files that turn up corrupt). This keeps discovery fast but means the tool can't detect files that were silently corrupted without a mtime change (_e.g._, bitrot on a filesystem that doesn't update mtime). The periodic rescan interval mitigates this.
 - **Graceful shutdown** - Ctrl+C finishes in-flight workers before exiting. A second Ctrl+C force-quits.
+- **One run at a time** - `scan`, `recheck`, `recover` and `accept` hold `<db-path>.lock`; a second one exits 2 naming the running pid, and a lock left by a dead process is taken over.
 
 ## Scheduling
 

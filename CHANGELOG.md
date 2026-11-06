@@ -1,5 +1,11 @@
 # flacscan
 
+## 4.2.0
+
+### Minor Changes
+
+- Moves now survive case-only renames and reused names; discovery prunes rows for missing files; configured directories match their on-disk case; `scan`, `recheck`, `recover` and `accept` refuse to run concurrently (exit 2); `recover` no longer rounds a rejected loss down to its limit
+
 ## 4.1.1
 
 ### Patch Changes

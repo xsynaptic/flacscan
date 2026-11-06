@@ -1,6 +1,6 @@
 {
 	"name": "flacscan",
-	"version": "4.1.1",
+	"version": "4.2.0",
 	"description": "Periodic integrity verification for large FLAC collections",
 	"keywords": [
 		"flac",
