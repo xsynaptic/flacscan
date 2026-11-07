@@ -1,5 +1,7 @@
 import { spawnSync } from 'node:child_process';
-import { readdirSync, readFileSync } from 'node:fs';
+import { closeSync, mkdtempSync, openSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { styleText } from 'node:util';
 
 interface PackageManifest {
@@ -16,12 +18,41 @@ function capture(command: string, args: string[]) {
 	return spawnSync(command, args, { encoding: 'utf8', timeout: 30_000 });
 }
 
+function secondsSince(startedAt: number) {
+	return ((performance.now() - startedAt) / 1000).toFixed(1);
+}
+
 function step(command: string, args: string[]) {
 	const startedAt = performance.now();
 	console.log(styleText('bold', `› ${[command, ...args].join(' ')}`));
 	run(command, args);
-	const seconds = ((performance.now() - startedAt) / 1000).toFixed(1);
-	console.log(styleText('green', `✓ done in ${seconds}s\n`));
+	console.log(styleText('green', `✓ done in ${secondsSince(startedAt)}s\n`));
+}
+
+function quietStep(command: string, args: string[]) {
+	const logDirectory = mkdtempSync(path.join(tmpdir(), 'flacscan-release-'));
+	const logPath = path.join(logDirectory, 'output.log');
+	const logFile = openSync(logPath, 'w');
+	const startedAt = performance.now();
+
+	process.stdout.write(styleText('bold', `› ${[command, ...args].join(' ')}… `));
+
+	const result = spawnSync(command, args, {
+		env: { ...process.env, FORCE_COLOR: '1' },
+		stdio: ['ignore', logFile, logFile],
+	});
+
+	closeSync(logFile);
+	const output = readFileSync(logPath, 'utf8');
+	rmSync(logDirectory, { recursive: true });
+
+	if (result.status !== 0) {
+		console.log(styleText('red', `failed after ${secondsSince(startedAt)}s\n`));
+		process.stdout.write(output);
+		process.exit(result.status ?? 1);
+	}
+
+	console.log(styleText('green', `done in ${secondsSince(startedAt)}s\n`));
 }
 
 function exitWith(message: string): never {
@@ -86,7 +117,7 @@ if (whoami.status !== 0) exitWith('Not logged in to npm; run `npm login` first')
 
 console.log(`Releasing ${manifest.name}@${manifest.version} as ${whoami.stdout.trim()}\n`);
 
-step('pnpm', ['build']);
+quietStep('pnpm', ['build']);
 step('pnpm', ['changeset', 'publish']);
 // The gate above already passed on this tree; the pre-push hook would only repeat it
 step('git', ['push', '--no-verify', '--follow-tags', 'origin', 'main']);

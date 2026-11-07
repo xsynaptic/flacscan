@@ -186,7 +186,7 @@ describe('runCommand run lock', () => {
 		const script = `import fs from 'node:fs';
 import { acquireRunLock } from ${JSON.stringify(runLock)};
 acquireRunLock(${JSON.stringify(dbPath)});
-console.log(fs.existsSync(${JSON.stringify(`${dbPath}.lock`)}));
+process.stdout.write(String(fs.existsSync(${JSON.stringify(`${dbPath}.lock`)})));
 process.exit(2);`;
 
 		const child = spawnSync(process.execPath, ['--input-type=module', '-e', script], {
