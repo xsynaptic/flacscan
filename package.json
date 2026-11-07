@@ -35,8 +35,7 @@
 		"fix": "lefthook run fix",
 		"test": "vitest run",
 		"changeset": "changeset",
-		"release": "node scripts/release.ts",
-		"prepublishOnly": "pnpm build"
+		"release": "node scripts/release.ts"
 	},
 	"dependencies": {
 		"better-sqlite3": "^13.0.3",
