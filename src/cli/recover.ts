@@ -10,8 +10,8 @@ import ora from 'ora';
 import type { AttemptResult, RecoverItem } from '#cli/recover-attempt.ts';
 import type { FlacScanConfig } from '#config/types.ts';
 import type { FileRow } from '#database/types.ts';
+import type { StopSignal } from '#process-pool.ts';
 
-import { installShutdownHandler, isShuttingDown, processPool } from '#cli/process-pool.ts';
 import { attemptRecovery } from '#cli/recover-attempt.ts';
 import { flacEngine } from '#cli/recover-engine.ts';
 import { runCommand } from '#cli/run-command.ts';
@@ -19,7 +19,8 @@ import { sharedArguments } from '#cli/shared-arguments.ts';
 import { countRecoveryAttempted, getRecoveryCandidates } from '#database/queries.ts';
 import { checkMountedPaths } from '#discovery.ts';
 import { FlacScanError } from '#errors.ts';
-import { directoryPrefix, existsAsSpelled } from '#paths.ts';
+import { directoryPrefix, statAsSpelled } from '#paths.ts';
+import { processPool } from '#process-pool.ts';
 import { findSpaceViolations, recoveredFilePath } from '#recovery.ts';
 import { ensureBinary } from '#shell.ts';
 
@@ -31,6 +32,7 @@ interface PreparedCounts {
 interface RecoveryRun {
 	config: FlacScanConfig;
 	entries: ReportEntry[];
+	signal: StopSignal;
 	spinner: Ora;
 	stoppedDevs: Set<number>;
 	tally: RecoveryTally;
@@ -78,18 +80,17 @@ export const recoverCommand = defineCommand({
 		name: 'recover',
 	},
 	async run({ args }) {
-		installShutdownHandler();
-
 		await runCommand(
 			args,
 			{
 				exclusive: true,
+				interruptible: true,
 				async prepare() {
 					await ensureBinary('flac');
 					await ensureBinary('metaflac', 'brew install flac');
 				},
 			},
-			async (db, config) => {
+			async (db, config, signal) => {
 				const alreadyAttempted = countRecoveryAttempted(db);
 				if (alreadyAttempted > 0) {
 					console.log(
@@ -103,7 +104,7 @@ export const recoverCommand = defineCommand({
 					alreadyAttempted === 0
 						? 'No corrupt files to recover.'
 						: 'No un-attempted corrupt files to recover.';
-				const reportEntries = await runRecovery(config, db, rows);
+				const reportEntries = await runRecovery({ config, db, signal }, rows);
 				if (reportEntries === undefined) {
 					console.log(emptyMessage);
 					return;
@@ -118,8 +119,7 @@ export const recoverCommand = defineCommand({
 });
 
 export async function runRecovery(
-	config: FlacScanConfig,
-	db: Database.Database,
+	{ config, db, signal }: { config: FlacScanConfig; db: Database.Database; signal: StopSignal },
 	rows: FileRow[],
 ): Promise<ReportEntry[] | undefined> {
 	const mountCheck = checkMountedPaths(config.directories);
@@ -159,13 +159,17 @@ export async function runRecovery(
 		`Prepared ${String(items.length)} file(s) (${String(counts.alreadyPresent)} already recovered, ${String(counts.unavailable)} unavailable).`,
 	);
 
-	return recoverAll({ config, db }, items, counts);
+	return recoverAll({ config, db, signal }, items, counts);
 }
 
-function finishRecovery({ spinner, tally }: RecoveryRun, total: number, counts: PreparedCounts) {
+function finishRecovery(
+	{ signal, spinner, tally }: RecoveryRun,
+	total: number,
+	counts: PreparedCounts,
+) {
 	const totalUnavailable = counts.unavailable + tally.unavailable;
 	const summary = `${String(tally.recovered)} recovered, ${String(tally.skipped)} skipped (unsuitable), ${String(tally.failed)} failed, ${String(counts.alreadyPresent)} already recovered, ${String(totalUnavailable)} unavailable, ${String(tally.bufferStopped)} stopped (buffer floor)`;
-	if (isShuttingDown()) {
+	if (signal.aborted) {
 		spinner.warn(
 			`Recovering interrupted at ${String(tally.processed)}/${String(total)}: ${summary}`,
 		);
@@ -244,13 +248,14 @@ function prepareItems(candidates: FileRow[], spinner: Ora) {
 }
 
 async function recoverAll(
-	{ config, db }: { config: FlacScanConfig; db: Database.Database },
+	{ config, db, signal }: { config: FlacScanConfig; db: Database.Database; signal: StopSignal },
 	items: RecoverItem[],
 	counts: PreparedCounts,
 ): Promise<ReportEntry[]> {
 	const run: RecoveryRun = {
 		config,
 		entries: [],
+		signal,
 		spinner: ora({
 			discardStdin: false,
 			text: `Recovering: 0/${String(items.length)} files`,
@@ -259,12 +264,12 @@ async function recoverAll(
 		tally: { bufferStopped: 0, failed: 0, processed: 0, recovered: 0, skipped: 0, unavailable: 0 },
 	};
 
-	await processPool(items, config.parallelism, async (item) => {
+	await processPool(items, { concurrency: config.parallelism, signal }, async (item) => {
 		run.tally.processed++;
 		run.spinner.text = `Recovering: ${String(run.tally.processed)}/${String(items.length)} files`;
 		if (!(await hasRoom(run, item))) return;
 
-		const result = await attemptRecovery({ config, db, env: flacEngine }, item);
+		const result = await attemptRecovery({ config, db, env: flacEngine, signal }, item);
 		reportAttempt(run, item, result);
 	});
 
@@ -319,12 +324,8 @@ function spaceError(violations: ReturnType<typeof findSpaceViolations>): FlacSca
 }
 
 function statSpelledSource(src: string): fs.Stats | undefined {
-	if (!existsAsSpelled(src)) return undefined;
-	try {
-		return fs.statSync(src);
-	} catch {
-		return undefined;
-	}
+	const look = statAsSpelled(src);
+	return look.kind === 'present' ? look.stats : undefined;
 }
 
 function durationLabel(samples: null | number, sampleRate: number): string {

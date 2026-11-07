@@ -9,10 +9,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FormatVerifier } from '#verifiers/types.ts';
 
 import { runVerification } from '#cli/scan-verify.ts';
-import { findFileByPath, upsertFile } from '#database/queries.ts';
+import { findFileByPath, identityOf, recordReadable } from '#database/queries.ts';
 import { initializeSchema } from '#database/schema.ts';
 
-import { caseInsensitiveTmp, makeTestConfig } from '../helpers.ts';
+import { makeTestConfig } from '../helpers.ts';
+
+const running = { aborted: false };
 
 let db: Database.Database;
 let tempDir: string;
@@ -42,176 +44,131 @@ function fakeVerifier(
 	};
 }
 
-function logEvents(logPath: string): string[] {
-	if (!fs.existsSync(logPath)) return [];
-	return fs
-		.readFileSync(logPath, 'utf8')
-		.trim()
-		.split('\n')
-		.map((line) => (JSON.parse(line) as { event: string }).event);
-}
-
 function seedFile(name: string): string {
 	const filePath = path.join(tempDir, name);
 	fs.writeFileSync(filePath, 'data');
-	upsertFile(db, { current_path: filePath, file_mtime: null, file_size: null });
+	recordReadable(db, [{ identity: identityOf(fs.statSync(filePath)), path: filePath }]);
 	return filePath;
 }
 
 describe('runVerification', () => {
-	it('records a healthy file', async () => {
-		const filePath = seedFile('ok.flac');
-		const verifier = fakeVerifier(() => Promise.resolve({ status: 'healthy' }));
-
-		const stats = await runVerification(db, makeTestConfig(tempDir), {
-			directories: [tempDir],
-			verifier: verifier,
-		});
-
-		expect(stats).toMatchObject({ exitCode: 0, healthy: 1 });
-		const row = findFileByPath(db, filePath);
-		expect(row?.last_result).toBe('healthy');
-		expect(row?.last_verified_at).not.toBeNull();
-	});
-
-	it('records a corrupt file, sets exit code 1, and logs it', async () => {
-		const filePath = seedFile('bad.flac');
-		const config = makeTestConfig(tempDir);
-		const verifier = fakeVerifier(() =>
-			Promise.resolve({ errorOutput: 'boom', errorTimestamp: 'sample 1', status: 'corrupt' }),
-		);
-
-		const stats = await runVerification(db, config, { directories: [tempDir], verifier: verifier });
-
-		expect(stats?.corrupt).toBe(1);
-		expect(stats?.exitCode).toBe(1);
-		const row = findFileByPath(db, filePath);
-		expect(row?.last_result).toBe('corrupt');
-		expect(row?.error_severity).toBeNull();
-		expect(logEvents(config.log_path)).toContain('corrupt');
-	});
-
-	it('alarms on an unacknowledged corrupt file (exit 1, one new)', async () => {
-		seedFile('new-bad.flac');
-		const verifier = fakeVerifier(() =>
-			Promise.resolve({ errorOutput: 'boom', errorTimestamp: null, status: 'corrupt' }),
-		);
-
-		const stats = await runVerification(db, makeTestConfig(tempDir), {
-			directories: [tempDir],
-			verifier: verifier,
-		});
-
-		expect(stats?.corrupt).toBe(1);
-		expect(stats?.newCorrupt).toBe(1);
-		expect(stats?.exitCode).toBe(1);
-	});
-
-	it('stays green on an acknowledged corrupt file (exit 0, none new)', async () => {
-		const filePath = seedFile('known-bad.flac');
-		const old = new Date(Date.now() - 200 * 24 * 60 * 60 * 1000).toISOString();
-		db.prepare(
-			`UPDATE files SET last_result = 'corrupt', acknowledged_at = ?, last_verified_at = ? WHERE current_path = ?`,
-		).run('2020-01-01T00:00:00.000Z', old, filePath);
-		const verifier = fakeVerifier(() =>
-			Promise.resolve({ errorOutput: 'boom', errorTimestamp: null, status: 'corrupt' }),
-		);
-
-		const stats = await runVerification(db, makeTestConfig(tempDir), {
-			directories: [tempDir],
-			verifier: verifier,
-		});
-
-		expect(stats?.corrupt).toBe(1);
-		expect(stats?.newCorrupt).toBe(0);
-		expect(stats?.exitCode).toBe(0);
-	});
-
-	it('prunes a row whose file no longer exists', async () => {
-		const filePath = seedFile('vanished.flac');
-		fs.rmSync(filePath);
-		const verifier = fakeVerifier(() => Promise.resolve({ status: 'healthy' }));
-
-		const stats = await runVerification(db, makeTestConfig(tempDir), {
-			directories: [tempDir],
-			verifier: verifier,
-		});
-
-		expect(stats?.pruned).toBe(1);
-		expect(findFileByPath(db, filePath)).toBeUndefined();
-	});
-
-	it.runIf(caseInsensitiveTmp)('prunes a row keyed by a case alias of a file', async () => {
-		fs.writeFileSync(path.join(tempDir, 'Track.flac'), 'data');
-		const alias = path.join(tempDir, 'track.flac');
-		upsertFile(db, { current_path: alias, file_mtime: null, file_size: null });
-		const verifier = fakeVerifier(() => Promise.resolve({ status: 'healthy' }));
-
-		const stats = await runVerification(db, makeTestConfig(tempDir), {
-			directories: [tempDir],
-			verifier: verifier,
-		});
-
-		expect(stats?.pruned).toBe(1);
-		expect(findFileByPath(db, alias)).toBeUndefined();
-	});
-
-	it('fixes a corrupt file when fix is enabled', async () => {
-		const filePath = seedFile('fixable.flac');
-		const config = makeTestConfig(tempDir, { fix: true });
-		let calls = 0;
-		const verify: FormatVerifier['verify'] = () => {
-			calls++;
-			if (calls === 1) {
-				return Promise.resolve({
-					errorOutput: 'ID3 tag found',
-					errorTimestamp: null,
-					status: 'corrupt',
-				});
-			}
-			return Promise.resolve({ status: 'healthy' });
-		};
-		const verifier = fakeVerifier(verify, {
-			detect: () => true,
-			fix: () => Promise.resolve({ ok: true }),
-			label: 'ID3',
-			requiredBinaries: [],
-		});
-
-		const stats = await runVerification(db, config, { directories: [tempDir], verifier: verifier });
-
-		expect(stats?.fixed).toBe(1);
-		expect(findFileByPath(db, filePath)?.last_result).toBe('healthy');
-		expect(logEvents(config.log_path)).toContain('id3_fixed');
-	});
-
-	it('detects a fixable issue but does not fix when fix is disabled', async () => {
-		seedFile('detectable.flac');
-		const config = makeTestConfig(tempDir, { fix: false });
-		const fixSpy = vi.fn(() => Promise.resolve({ ok: true }));
+	it('prints a line for each pruned, fixed and corrupt outcome and returns the exit code', async () => {
+		const vanished = seedFile('vanished.flac');
+		fs.rmSync(vanished);
+		const fixable = seedFile('fixable.flac');
+		const corrupt = seedFile('corrupt.flac');
+		seedFile('healthy.flac');
+		const checked = new Set<string>();
 		const verifier = fakeVerifier(
-			() =>
-				Promise.resolve({ errorOutput: 'ID3 tag found', errorTimestamp: null, status: 'corrupt' }),
+			(filePath) => {
+				const firstCheck = !checked.has(filePath);
+				checked.add(filePath);
+				if (filePath === corrupt) {
+					return Promise.resolve({
+						errorOutput: 'LOST_SYNC',
+						errorTimestamp: null,
+						status: 'corrupt',
+					});
+				}
+				if (filePath === fixable && firstCheck) {
+					return Promise.resolve({ errorOutput: 'ID3', errorTimestamp: null, status: 'corrupt' });
+				}
+				return Promise.resolve({ status: 'healthy' });
+			},
 			{
-				detect: () => true,
-				fix: fixSpy,
+				detect: (errorOutput) => errorOutput === 'ID3',
+				fix: () => {
+					fs.writeFileSync(fixable, 'stripped');
+					return Promise.resolve({ ok: true });
+				},
 				label: 'ID3',
 				requiredBinaries: [],
 			},
 		);
 
-		const stats = await runVerification(db, config, { directories: [tempDir], verifier: verifier });
+		const result = await runVerification(db, makeTestConfig(tempDir, { fix: true }), {
+			directories: [tempDir],
+			signal: running,
+			verifier: verifier,
+		});
 
-		expect(fixSpy).not.toHaveBeenCalled();
-		expect(stats?.corrupt).toBe(1);
-		expect(logEvents(config.log_path)).toContain('id3_detected');
+		expect(result?.exitCode).toBe(1);
+		expect(result?.stats).toMatchObject({ corrupt: 1, fixed: 1, healthy: 1, pruned: 1 });
+		const lines = vi.mocked(console.log).mock.calls.map(([line]) => String(line));
+		expect(lines).toEqual(
+			expect.arrayContaining([
+				expect.stringContaining(`PRUNED ${vanished}`),
+				expect.stringContaining(`ID3_FIXED ${fixable}`),
+				expect.stringContaining(`NEW CORRUPT ${corrupt}`),
+			]),
+		);
+		expect(lines.filter((line) => line.includes('healthy.flac'))).toEqual([]);
 	});
+
+	it.skipIf(process.getuid?.() === 0)(
+		'keeps the accepted row of a file that has turned unreadable, printing nothing for it',
+		async () => {
+			fs.mkdirSync(path.join(tempDir, 'locked'));
+			const filePath = seedFile(path.join('locked', 'track.flac'));
+			db.prepare(`UPDATE files SET acknowledged_at = ? WHERE current_path = ?`).run(
+				'2020-01-01T00:00:00.000Z',
+				filePath,
+			);
+			const verifier = fakeVerifier(() => Promise.resolve({ status: 'healthy' }));
+			fs.chmodSync(path.join(tempDir, 'locked'), 0o000);
+
+			try {
+				const result = await runVerification(db, makeTestConfig(tempDir), {
+					directories: [tempDir],
+					signal: running,
+					verifier: verifier,
+				});
+
+				expect(result).toMatchObject({ exitCode: 0, stats: { pruned: 0 } });
+				expect(findFileByPath(db, filePath)?.acknowledged_at).toBe('2020-01-01T00:00:00.000Z');
+				expect(vi.mocked(console.log)).not.toHaveBeenCalledWith(expect.stringContaining('PRUNED'));
+			} finally {
+				fs.chmodSync(path.join(tempDir, 'locked'), 0o755);
+			}
+		},
+	);
+
+	it.skipIf(process.getuid?.() === 0)(
+		'moves the batch past a file that has turned unreadable instead of selecting it every scan',
+		async () => {
+			fs.mkdirSync(path.join(tempDir, 'locked'));
+			const locked = seedFile(path.join('locked', 'track.flac'));
+			const overdue = seedFile('overdue.flac');
+			db.prepare(
+				`UPDATE files SET last_result = 'healthy', last_verified_at = ? WHERE current_path = ?`,
+			).run('2000-01-01T00:00:00.000Z', overdue);
+			const config = makeTestConfig(tempDir, { batch_size: 1 });
+			const verifier = fakeVerifier(() => Promise.resolve({ status: 'healthy' }));
+			fs.chmodSync(path.join(tempDir, 'locked'), 0o000);
+
+			try {
+				for (let scan = 0; scan < 3; scan++) {
+					await runVerification(db, config, {
+						directories: [tempDir],
+						signal: running,
+						verifier: verifier,
+					});
+				}
+			} finally {
+				fs.chmodSync(path.join(tempDir, 'locked'), 0o755);
+			}
+
+			expect(findFileByPath(db, overdue)?.last_verified_at).not.toBe('2000-01-01T00:00:00.000Z');
+			expect(findFileByPath(db, locked)?.last_result).toBe('pending');
+		},
+	);
 
 	it('returns null when no files need verification', async () => {
 		const verifier = fakeVerifier(() => Promise.resolve({ status: 'healthy' }));
 
 		const result = await runVerification(db, makeTestConfig(tempDir), {
 			directories: [tempDir],
+			signal: running,
 			verifier: verifier,
 		});
 

@@ -3,15 +3,15 @@ import type { Ora } from 'ora';
 import { defineCommand } from 'citty';
 import ora from 'ora';
 
-import { installShutdownHandler, isShuttingDown } from '#cli/process-pool.ts';
 import { runCommand } from '#cli/run-command.ts';
 import { runDiscovery } from '#cli/scan-discover.ts';
-import { emptyVerificationStats, runVerification } from '#cli/scan-verify.ts';
+import { runVerification } from '#cli/scan-verify.ts';
 import { sharedArguments } from '#cli/shared-arguments.ts';
 import { discoverFiles } from '#discovery.ts';
 import { logScanComplete, logScanStart } from '#logging/scan-log.ts';
 import { sendNotification } from '#notify.ts';
 import { ensureBinary } from '#shell.ts';
+import { emptyPassStats } from '#verification/verification-pass.ts';
 import { flacVerifier } from '#verifiers/flac/verify.ts';
 
 function reportWalk(spinner: Ora, walk: Awaited<ReturnType<typeof discoverFiles>>) {
@@ -61,11 +61,11 @@ export const scanCommand = defineCommand({
 		name: 'scan',
 	},
 	async run({ args }) {
-		installShutdownHandler();
 		await runCommand(
 			args,
 			{
 				exclusive: true,
+				interruptible: true,
 				async prepare(config) {
 					for (const bin of flacVerifier.requiredBinaries) {
 						await ensureBinary(bin.name, bin.hint);
@@ -77,7 +77,7 @@ export const scanCommand = defineCommand({
 					}
 				},
 			},
-			async (db, config) => {
+			async (db, config, signal) => {
 				const walkSpinner = ora({ discardStdin: false, text: 'Scanning directories...' }).start();
 				const walk = await discoverFiles(config.directories, flacVerifier.extensions);
 				reportWalk(walkSpinner, walk);
@@ -89,17 +89,18 @@ export const scanCommand = defineCommand({
 					total: config.directories.length,
 				});
 
-				const discoveryStats = await runDiscovery(db, config, walk);
+				const discoveryStats = await runDiscovery({ config, db, signal }, walk);
 
-				if (isShuttingDown()) {
+				if (signal.aborted) {
 					return;
 				}
 
-				const verificationStats =
-					(await runVerification(db, config, {
-						directories: mountCheck.available,
-						verifier: flacVerifier,
-					})) ?? emptyVerificationStats();
+				const verification = (await runVerification(db, config, {
+					directories: mountCheck.available,
+					signal,
+					verifier: flacVerifier,
+				})) ?? { exitCode: 0, stats: emptyPassStats() };
+				const verificationStats = verification.stats;
 
 				const pruned = discoveryStats.pruned + verificationStats.pruned;
 				logScanComplete(config.log_path, {
@@ -126,7 +127,7 @@ export const scanCommand = defineCommand({
 					);
 				}
 
-				process.exitCode = verificationStats.exitCode;
+				process.exitCode = verification.exitCode;
 			},
 		);
 	},

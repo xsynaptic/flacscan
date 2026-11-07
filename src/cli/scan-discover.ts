@@ -6,19 +6,18 @@ import fs from 'node:fs';
 import ora from 'ora';
 
 import type { FlacScanConfig } from '#config/types.ts';
+import type { FileIdentity, Sighting } from '#database/types.ts';
+import type { StopSignal } from '#process-pool.ts';
 
-import { isShuttingDown } from '#cli/process-pool.ts';
 import {
-	clearRecoveryOutcome,
-	deleteFileByPath,
-	deleteUnreadableByPath,
-	findFileByPath,
-	findFilesBySizeAndMtime,
-	findUnreadableByPath,
-	getPathsUnder,
-	updateFilePath,
-	upsertFile,
-	upsertUnreadableFile,
+	applyMoves,
+	classifySightings,
+	identityOf,
+	pathsUnder,
+	pathsWithIdentity,
+	prunePaths,
+	recordReadable,
+	recordUnreadable,
 } from '#database/queries.ts';
 import { logFileMoved, logUnreadable } from '#logging/scan-log.ts';
 import { directoryPrefix } from '#paths.ts';
@@ -34,31 +33,21 @@ interface DiscoveryStats {
 	unreadable: number;
 }
 
-interface Observed {
-	mtime: string;
-	size: number;
-}
-
 interface Observation {
-	observed: Map<string, Observed>;
+	observed: Map<string, FileIdentity>;
 	unreadable: Set<string>;
-}
-
-interface Destination {
-	existing: boolean;
-	filePath: string;
-	stat: Observed;
 }
 
 interface Move {
 	from: string;
-	to: Destination;
+	to: string;
 }
 
 interface DiscoveryRun {
 	db: Database.Database;
 	logPath: string;
 	progress: Progress;
+	signal: StopSignal;
 	walked: string[];
 }
 
@@ -74,8 +63,7 @@ interface Walk {
 }
 
 export async function runDiscovery(
-	db: Database.Database,
-	config: FlacScanConfig,
+	{ config, db, signal }: { config: FlacScanConfig; db: Database.Database; signal: StopSignal },
 	{ files, walked }: Walk,
 ): Promise<DiscoveryStats> {
 	const listed = [...new Set(files)];
@@ -90,24 +78,31 @@ export async function runDiscovery(
 			stats: { moved: 0, processed: 0, pruned: 0, skipped: 0, unreadable: 0 },
 			total: listed.length,
 		},
+		signal,
 		walked,
 	};
 	const { spinner, stats } = run.progress;
 
 	const observation = await observe(run, listed);
 	if (observation !== undefined) {
-		const destinations = classify(db, observation, stats);
-		const moves = planMoves(run, destinations, observation);
-		applyMoves(db, moves, config);
+		const sightings = [...observation.observed].map(([filePath, identity]): Sighting => ({
+			identity,
+			path: filePath,
+		}));
+		const { changed, reread } = classifySightings(db, sightings);
+		stats.skipped = sightings.length - changed.length;
+		const moves = planMoves(run, changed, observation);
+		applyMoves(db, moves);
+		for (const move of moves) logFileMoved(config.log_path, move.from, move.to);
 		stats.moved = moves.length;
-		const moved = new Set(moves.map((move) => move.to.filePath));
-		await upsertChanged(
-			db,
-			destinations.filter((destination) => !moved.has(destination.filePath)),
-		);
+		const moved = new Set(moves.map((move) => move.to));
+		await recordChanged(run, [
+			...changed.filter((sighting) => !moved.has(sighting.path)),
+			...reread,
+		]);
 	}
 
-	if (observation === undefined || isShuttingDown()) {
+	if (observation === undefined || signal.aborted) {
 		spinner.warn(
 			`Discovery interrupted: ${String(stats.processed)}/${String(listed.length)} files processed`,
 		);
@@ -126,51 +121,33 @@ export async function runDiscovery(
 async function observe(run: DiscoveryRun, listed: string[]): Promise<Observation | undefined> {
 	const observation: Observation = { observed: new Map(), unreadable: new Set() };
 	for (let offset = 0; offset < listed.length; offset += CHUNK_SIZE) {
-		if (isShuttingDown()) return undefined;
+		if (run.signal.aborted) return undefined;
 		const chunk = listed.slice(offset, offset + CHUNK_SIZE);
-		run.db.transaction(() => {
-			for (const filePath of chunk) observeFile(run, filePath, observation);
-		})();
+		const unreadable = chunk.flatMap((filePath) => observeFile(run, filePath, observation));
+		recordUnreadable(run.db, unreadable);
 		// Yield so SIGINT and the spinner can run between chunks
 		await new Promise((resolve) => setImmediate(resolve));
 	}
-	return isShuttingDown() ? undefined : observation;
+	return run.signal.aborted ? undefined : observation;
 }
 
 function observeFile(
-	{ db, logPath, progress: { spinner, stats, total } }: DiscoveryRun,
+	{ logPath, progress: { spinner, stats, total } }: DiscoveryRun,
 	filePath: string,
 	observation: Observation,
-) {
+): { error: string; path: string }[] {
 	stats.processed++;
 	spinner.text = `Discovery: ${String(stats.processed)}/${String(total)} files`;
 	try {
-		const stat = fs.statSync(filePath);
-		observation.observed.set(filePath, { mtime: stat.mtime.toISOString(), size: stat.size });
+		observation.observed.set(filePath, identityOf(fs.statSync(filePath)));
+		return [];
 	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+		if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
 		observation.unreadable.add(filePath);
-		upsertUnreadableFile(db, { current_path: filePath, error_output: String(error) });
 		logUnreadable(logPath, filePath, String(error));
 		stats.unreadable++;
+		return [{ error: String(error), path: filePath }];
 	}
-}
-
-function classify(
-	db: Database.Database,
-	{ observed }: Observation,
-	stats: DiscoveryStats,
-): Destination[] {
-	const destinations: Destination[] = [];
-	for (const [filePath, stat] of observed) {
-		const existing = findFileByPath(db, filePath);
-		if (existing?.file_mtime === stat.mtime && existing.file_size === stat.size) {
-			stats.skipped++;
-			continue;
-		}
-		destinations.push({ existing: existing !== undefined, filePath, stat });
-	}
-	return destinations;
 }
 
 function countClaims(candidatesByDestination: string[][]): Map<string, number> {
@@ -183,19 +160,17 @@ function countClaims(candidatesByDestination: string[][]): Map<string, number> {
 
 function planMoves(
 	{ db, walked }: DiscoveryRun,
-	destinations: Destination[],
+	destinations: Sighting[],
 	{ observed, unreadable }: Observation,
 ): Move[] {
 	const prefixes = walked.map((directory) => directoryPrefix(directory));
-	const candidatesByDestination = destinations.map((destination) =>
-		findFilesBySizeAndMtime(db, destination.stat.size, destination.stat.mtime)
-			.map((row) => row.current_path)
-			.filter((candidate) => {
-				if (candidate === destination.filePath || unreadable.has(candidate)) return false;
-				if (prefixes.every((prefix) => !candidate.startsWith(prefix))) return false;
-				const now = observed.get(candidate);
-				return now?.size !== destination.stat.size || now.mtime !== destination.stat.mtime;
-			}),
+	const candidatesByDestination = destinations.map(({ identity, path: destination }) =>
+		pathsWithIdentity(db, identity).filter((candidate) => {
+			if (candidate === destination || unreadable.has(candidate)) return false;
+			if (prefixes.every((prefix) => !candidate.startsWith(prefix))) return false;
+			const now = observed.get(candidate);
+			return now?.size !== identity.size || now.mtime !== identity.mtime;
+		}),
 	);
 	const claims = countClaims(candidatesByDestination);
 
@@ -204,51 +179,16 @@ function planMoves(
 		const candidates = candidatesByDestination[index] ?? [];
 		const [only] = candidates;
 		if (only !== undefined && candidates.length === 1 && claims.get(only) === 1) {
-			moves.push({ from: only, to: destination });
+			moves.push({ from: only, to: destination.path });
 		}
 	}
 	return moves;
 }
 
-function applyMoves(db: Database.Database, moves: Move[], config: FlacScanConfig) {
-	if (moves.length === 0) return;
-	const sources = new Set(moves.map((move) => move.from));
-	db.transaction(() => {
-		for (const move of moves) {
-			if (move.to.existing && !sources.has(move.to.filePath)) {
-				deleteFileByPath(db, move.to.filePath);
-			}
-		}
-		for (const [index, move] of moves.entries()) {
-			updateFilePath(db, move.from, `moving:${String(index)}`);
-		}
-		for (const [index, move] of moves.entries()) {
-			updateFilePath(db, `moving:${String(index)}`, move.to.filePath);
-			deleteUnreadableByPath(db, move.to.filePath);
-		}
-	})();
-	for (const move of moves) logFileMoved(config.log_path, move.from, move.to.filePath);
-}
-
-async function upsertChanged(db: Database.Database, destinations: Destination[]) {
-	for (let offset = 0; offset < destinations.length && !isShuttingDown(); offset += CHUNK_SIZE) {
-		const chunk = destinations.slice(offset, offset + CHUNK_SIZE);
-		db.transaction(() => {
-			for (const destination of chunk) upsertDestination(db, destination);
-		})();
+async function recordChanged({ db, signal }: DiscoveryRun, sightings: Sighting[]) {
+	for (let offset = 0; offset < sightings.length && !signal.aborted; offset += CHUNK_SIZE) {
+		recordReadable(db, sightings.slice(offset, offset + CHUNK_SIZE));
 		await new Promise((resolve) => setImmediate(resolve));
-	}
-}
-
-function upsertDestination(db: Database.Database, { existing, filePath, stat }: Destination) {
-	if (findUnreadableByPath(db, filePath)) {
-		deleteUnreadableByPath(db, filePath);
-	}
-	try {
-		upsertFile(db, { current_path: filePath, file_mtime: stat.mtime, file_size: stat.size });
-		if (existing) clearRecoveryOutcome(db, filePath);
-	} catch (error) {
-		console.warn(`Warning: failed to update database for ${filePath}: ${String(error)}`);
 	}
 }
 
@@ -257,17 +197,11 @@ function pruneUnlisted(
 	{ observed, unreadable }: Observation,
 ): number {
 	const isListed = (filePath: string) => observed.has(filePath) || unreadable.has(filePath);
-	const files = getPathsUnder(db, 'files', walked).filter((row) => !isListed(row));
-	const unreadableRows = getPathsUnder(db, 'unreadable_files', walked).filter(
-		(row) => !isListed(row),
-	);
-	db.transaction(() => {
-		for (const filePath of files) deleteFileByPath(db, filePath);
-		for (const filePath of unreadableRows) deleteUnreadableByPath(db, filePath);
-	})();
-	for (const filePath of [...files, ...unreadableRows]) {
+	const unlisted = pathsUnder(db, walked).filter((filePath) => !isListed(filePath));
+	prunePaths(db, unlisted);
+	for (const filePath of unlisted) {
 		spinner.clear();
 		console.log(chalk.blue(`  PRUNED ${filePath}`));
 	}
-	return files.length + unreadableRows.length;
+	return unlisted.length;
 }

@@ -1,17 +1,12 @@
 import { defineCommand } from 'citty';
 import path from 'node:path';
 
+import type { Issue } from '#database/issues.ts';
 import type { FileRow, UnreadableFileRow } from '#database/types.ts';
 
 import { runCommand } from '#cli/run-command.ts';
 import { sharedArguments } from '#cli/shared-arguments.ts';
-import {
-	getAllUnreadableFiles,
-	getCorruptFiles,
-	getCorruptFilesByAcknowledged,
-	getRegressedFiles,
-	getUnreadableFilesByAcknowledged,
-} from '#database/queries.ts';
+import { listIssues } from '#database/issues.ts';
 
 interface CorruptJsonEntry {
 	acknowledged_at: null | string;
@@ -124,42 +119,26 @@ export const listCommand = defineCommand({
 		const jsonOutput = args.json === true;
 
 		await runCommand(args, {}, (db) => {
-			if (filter === 'unreadable') {
-				// Keeps the query's byte order; the merged filters below sort with localeCompare
-				writeEntries(
-					getAllUnreadableFiles(db).map((file) => toUnreadableJson(file)),
-					jsonOutput,
-				);
-				return;
-			}
-			if (filter === 'regressed') {
-				writeEntries(
-					getRegressedFiles(db).map((file) => toCorruptJson(file)),
-					jsonOutput,
-				);
-				return;
-			}
-			if (filter === 'new' || filter === 'accepted') {
-				const accepted = filter === 'accepted';
-				writeIssues(
-					getCorruptFilesByAcknowledged(db, accepted),
-					getUnreadableFilesByAcknowledged(db, accepted),
-					jsonOutput,
-				);
-				return;
-			}
-			writeIssues(getCorruptFiles(db), getAllUnreadableFiles(db), jsonOutput);
+			writeEntries(selectEntries(listIssues(db), filter), jsonOutput);
 		});
 	},
 });
 
-function writeIssues(corrupt: FileRow[], unreadable: UnreadableFileRow[], jsonOutput: boolean) {
-	const entries: (CorruptJsonEntry | UnreadableJsonEntry)[] = [
-		...corrupt.map((file) => toCorruptJson(file)),
-		...unreadable.map((file) => toUnreadableJson(file)),
-	];
-	entries.sort((a, b) => a.original_path.localeCompare(b.original_path));
-	writeEntries(entries, jsonOutput);
+function selectEntries(issues: Issue[], filter: Filter | undefined) {
+	if (filter === 'unreadable' || filter === 'regressed') {
+		return issues.filter((issue) => issue.kind === filter).map((issue) => toJson(issue));
+	}
+	const selected =
+		filter === undefined
+			? issues
+			: issues.filter((issue) => issue.acknowledged === (filter === 'accepted'));
+	return selected
+		.map((issue) => toJson(issue))
+		.toSorted((a, b) => a.original_path.localeCompare(b.original_path));
+}
+
+function toJson(issue: Issue): CorruptJsonEntry | UnreadableJsonEntry {
+	return issue.kind === 'unreadable' ? toUnreadableJson(issue.row) : toCorruptJson(issue.row);
 }
 
 function writeEntries(entries: (CorruptJsonEntry | UnreadableJsonEntry)[], jsonOutput: boolean) {

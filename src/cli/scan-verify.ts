@@ -4,57 +4,26 @@ import type { Ora } from 'ora';
 import chalk from 'chalk';
 import ora from 'ora';
 
-import type { CorruptOutcome } from '#cli/verify-and-record.ts';
 import type { FlacScanConfig } from '#config/types.ts';
-import type { FileRow } from '#database/types.ts';
+import type { StopSignal } from '#process-pool.ts';
+import type { PassOutcome, PassStats } from '#verification/verification-pass.ts';
 import type { FormatVerifier } from '#verifiers/types.ts';
 
 import { corruptSummary, printCorruptFile } from '#cli/format-corrupt.ts';
-import { isShuttingDown, processPool } from '#cli/process-pool.ts';
-import { verifyAndRecord } from '#cli/verify-and-record.ts';
-import { deleteFileByPath, getFilesNeedingVerification } from '#database/queries.ts';
-import { existsAsSpelled } from '#paths.ts';
-
-interface VerificationRun {
-	config: FlacScanConfig;
-	db: Database.Database;
-	spinner: Ora;
-	stats: VerificationStats;
-	verifier: FormatVerifier;
-}
+import { getFilesNeedingVerification } from '#database/queries.ts';
+import { runVerificationPass } from '#verification/verification-pass.ts';
 
 interface VerificationScope {
 	directories: string[];
+	signal: StopSignal;
 	verifier: FormatVerifier;
-}
-
-interface VerificationStats {
-	corrupt: number;
-	exitCode: number;
-	fixed: number;
-	healthy: number;
-	newCorrupt: number;
-	newRegressed: number;
-	pruned: number;
-}
-
-export function emptyVerificationStats(): VerificationStats {
-	return {
-		corrupt: 0,
-		exitCode: 0,
-		fixed: 0,
-		healthy: 0,
-		newCorrupt: 0,
-		newRegressed: 0,
-		pruned: 0,
-	};
 }
 
 export async function runVerification(
 	db: Database.Database,
 	config: FlacScanConfig,
-	{ directories, verifier }: VerificationScope,
-): Promise<null | VerificationStats> {
+	{ directories, signal, verifier }: VerificationScope,
+): Promise<null | { exitCode: 0 | 1; stats: PassStats }> {
 	const filesToVerify = getFilesNeedingVerification(db, directories, config);
 
 	if (filesToVerify.length === 0) {
@@ -62,35 +31,41 @@ export async function runVerification(
 		return null;
 	}
 
-	const run: VerificationRun = {
-		config,
-		db,
-		spinner: ora({
-			discardStdin: false,
-			text: `Verifying: 0/${String(filesToVerify.length)} files`,
-		}).start(),
-		stats: emptyVerificationStats(),
-		verifier,
-	};
+	const total = filesToVerify.length;
+	const spinner = ora({ discardStdin: false, text: `Verifying: 0/${String(total)} files` }).start();
 	let verified = 0;
 
-	await processPool(filesToVerify, config.parallelism, async (file) => {
-		if (!(await verifyOne(run, file))) return;
-		verified++;
-		run.spinner.text = `Verifying: ${String(verified)}/${String(filesToVerify.length)} files`;
-	});
+	const result = await runVerificationPass(
+		{
+			db,
+			fix: config.fix,
+			logPath: config.log_path,
+			parallelism: config.parallelism,
+			signal,
+			verifier,
+		},
+		filesToVerify.map((file) => file.current_path),
+		(filePath, outcome) => {
+			printOutcome(spinner, filePath, outcome);
+			verified++;
+			spinner.text = `Verifying: ${String(verified)}/${String(total)} files`;
+		},
+	);
 
-	finishSpinner(run, filesToVerify.length);
-	return run.stats;
+	finishSpinner({ signal, spinner, total }, result.stats);
+	return result;
 }
 
-function finishSpinner({ spinner, stats }: VerificationRun, total: number) {
+function finishSpinner(
+	{ signal, spinner, total }: { signal: StopSignal; spinner: Ora; total: number },
+	stats: PassStats,
+) {
 	const verifiedTotal = stats.healthy + stats.corrupt + stats.fixed + stats.pruned;
 	const fixedSummary = stats.fixed > 0 ? `, ${String(stats.fixed)} fixed` : '';
 	const prunedSummary = stats.pruned > 0 ? `, ${String(stats.pruned)} pruned` : '';
 	const counts = `${String(stats.healthy)} healthy, ${corruptSummary(stats)}${fixedSummary}${prunedSummary}.`;
 
-	if (isShuttingDown()) {
+	if (signal.aborted) {
 		spinner.warn(
 			`Verification interrupted: ${String(verifiedTotal)}/${String(total)} files. ${counts}`,
 		);
@@ -99,44 +74,17 @@ function finishSpinner({ spinner, stats }: VerificationRun, total: number) {
 	spinner.succeed(`Verified ${String(total)} files. ${counts}`);
 }
 
-function reportCorrupt(
-	{ spinner, stats }: VerificationRun,
-	file: FileRow,
-	outcome: CorruptOutcome,
-) {
-	printCorruptFile(spinner, file.current_path, outcome);
-	stats.corrupt++;
-	if (outcome.known) return;
-	stats.newCorrupt++;
-	if (outcome.lastHealthyAt !== null) stats.newRegressed++;
-	stats.exitCode = 1;
-}
-
-function reportFixed({ spinner, stats }: VerificationRun, filePath: string, label: string) {
-	spinner.clear();
-	console.log(chalk.green(`  ${label}_FIXED ${filePath}`));
-	console.log(chalk.dim(`          Stripped ${label} tags, verification passed`));
-	stats.fixed++;
-}
-
-async function verifyOne(run: VerificationRun, file: FileRow): Promise<boolean> {
-	const { config, db, spinner, stats, verifier } = run;
-	if (!existsAsSpelled(file.current_path)) {
-		deleteFileByPath(db, file.current_path);
-		stats.pruned++;
+function printOutcome(spinner: Ora, filePath: string, outcome: PassOutcome) {
+	if (outcome.kind === 'pruned') {
 		spinner.clear();
-		console.log(chalk.blue(`  PRUNED ${file.current_path}`));
-		return true;
+		console.log(chalk.blue(`  PRUNED ${filePath}`));
+		return;
 	}
-
-	const outcome = await verifyAndRecord(
-		{ db, fix: config.fix, logPath: config.log_path, verifier },
-		file,
-	);
-	if (outcome.kind === 'interrupted') return false;
-
-	if (outcome.kind === 'healthy') stats.healthy++;
-	else if (outcome.kind === 'fixed') reportFixed(run, file.current_path, outcome.label);
-	else reportCorrupt(run, file, outcome);
-	return true;
+	if (outcome.kind === 'fixed') {
+		spinner.clear();
+		console.log(chalk.green(`  ${outcome.label}_FIXED ${filePath}`));
+		console.log(chalk.dim(`          Stripped ${outcome.label} tags, verification passed`));
+		return;
+	}
+	if (outcome.kind === 'corrupt') printCorruptFile(spinner, filePath, outcome);
 }

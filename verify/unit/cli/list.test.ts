@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { listCommand } from '#cli/list.ts';
 import { openDatabase } from '#database/connection.ts';
-import { upsertUnreadableFile } from '#database/queries.ts';
+import { recordUnreadable } from '#database/queries.ts';
 
 let tempDir: string;
 let output: string[];
@@ -41,7 +41,7 @@ function seed() {
 	insertFile.run('/m/Alpha/c.flac', 'corrupt', accepted, lastHealthy);
 	insertFile.run('/m/Alpha/ok.flac', 'healthy', null, lastHealthy);
 	for (const currentPath of ['/m/Beta/u.flac', '/m/alpha/u.flac', '/m/Zulu/u.flac']) {
-		upsertUnreadableFile(db, { current_path: currentPath, error_output: 'read error' });
+		recordUnreadable(db, [{ error: 'read error', path: currentPath }]);
 	}
 	db.prepare(`UPDATE unreadable_files SET acknowledged_at = ? WHERE current_path = ?`).run(
 		accepted,

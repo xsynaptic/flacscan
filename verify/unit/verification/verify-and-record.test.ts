@@ -9,21 +9,23 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FileRow } from '#database/types.ts';
 import type { FormatVerifier, VerificationResult } from '#verifiers/types.ts';
 
-import { isShuttingDown } from '#cli/process-pool.ts';
-import { verifyAndRecord } from '#cli/verify-and-record.ts';
-import { findFileByPath, upsertFile } from '#database/queries.ts';
+import {
+	findFileByPath,
+	identityOf,
+	recordReadable,
+	recordRecoveryOutcome,
+} from '#database/queries.ts';
 import { initializeSchema } from '#database/schema.ts';
 import { extractMetadata } from '#metadata.ts';
-
-vi.mock('#cli/process-pool.ts', () => ({
-	isShuttingDown: vi.fn(() => false),
-}));
+import { verifyAndRecord } from '#verification/verify-and-record.ts';
 
 vi.mock('#metadata.ts', () => ({
 	extractMetadata: vi.fn(() =>
 		Promise.resolve({ album: 'A', artist: 'B', date: '2020', duration: 1, title: 'T' }),
 	),
 }));
+
+const running = { aborted: false };
 
 let db: Database.Database;
 let logDir: string;
@@ -77,7 +79,10 @@ function makeVerifier(opts: {
 }
 
 function seed(currentPath = PATH): FileRow {
-	upsertFile(db, { current_path: currentPath, file_mtime: null, file_size: null });
+	const identity = fs.existsSync(currentPath)
+		? identityOf(fs.statSync(currentPath))
+		: { mtime: '2025-01-01T00:00:00.000Z', size: 1 };
+	recordReadable(db, [{ identity, path: currentPath }]);
 	return findFileByPath(db, currentPath)!;
 }
 
@@ -94,7 +99,13 @@ describe('verifyAndRecord', () => {
 	it('marks a healthy file healthy and clears error columns', async () => {
 		const file = seed();
 		const outcome = await verifyAndRecord(
-			{ db, fix: false, logPath, verifier: makeVerifier({ verify: [{ status: 'healthy' }] }) },
+			{
+				db,
+				fix: false,
+				logPath,
+				signal: running,
+				verifier: makeVerifier({ verify: [{ status: 'healthy' }] }),
+			},
 			file,
 		);
 
@@ -112,6 +123,7 @@ describe('verifyAndRecord', () => {
 				db,
 				fix: false,
 				logPath,
+				signal: running,
 				verifier: makeVerifier({ verify: [corrupt('LOST_SYNC', 'sample 42')] }),
 			},
 			file,
@@ -120,8 +132,8 @@ describe('verifyAndRecord', () => {
 		expect(outcome).toEqual({
 			errorOutput: 'LOST_SYNC',
 			errorTimestamp: 'sample 42',
+			issue: { acknowledged: false, kind: 'corrupt' },
 			kind: 'corrupt',
-			known: false,
 			lastHealthyAt: null,
 		});
 		expect(extractMetadata).toHaveBeenCalledOnce();
@@ -136,7 +148,13 @@ describe('verifyAndRecord', () => {
 	it('skips the metadata refresh when the file already has tags', async () => {
 		const file = { ...seed(), artist: 'existing' };
 		await verifyAndRecord(
-			{ db, fix: false, logPath, verifier: makeVerifier({ verify: [corrupt('LOST_SYNC')] }) },
+			{
+				db,
+				fix: false,
+				logPath,
+				signal: running,
+				verifier: makeVerifier({ verify: [corrupt('LOST_SYNC')] }),
+			},
 			file,
 		);
 
@@ -154,6 +172,7 @@ describe('verifyAndRecord', () => {
 					db,
 					fix: true,
 					logPath,
+					signal: running,
 					verifier: makeVerifier({ detect: true, verify: [corrupt('ID3'), { status: 'healthy' }] }),
 				},
 				file,
@@ -168,6 +187,40 @@ describe('verifyAndRecord', () => {
 		}
 	});
 
+	it('clears the recovery outcome of a file a fix rewrites', async () => {
+		const filePath = path.join(logDir, 'stripped.flac');
+		fs.writeFileSync(filePath, 'data with tags');
+		const file = seed(filePath);
+		recordRecoveryOutcome(db, filePath, {
+			detail: 'too lossy',
+			lostSamples: 1,
+			result: 'unsuitable',
+		});
+		const verifier = makeVerifier({
+			detect: true,
+			verify: [corrupt('ID3'), { status: 'healthy' }],
+		});
+		const fixer = {
+			...verifier.fixer!,
+			fix: () => {
+				fs.writeFileSync(filePath, 'data');
+				return Promise.resolve({ ok: true });
+			},
+		};
+
+		const outcome = await verifyAndRecord(
+			{ db, fix: true, logPath, signal: running, verifier: { ...verifier, fixer } },
+			file,
+		);
+
+		expect(outcome).toEqual({ kind: 'fixed', label: 'ID3' });
+		const row = findFileByPath(db, filePath)!;
+		expect(row.recovery_attempted_at).toBeNull();
+		expect(row.recovery_result).toBeNull();
+		expect(row.recovery_lost_samples).toBeNull();
+		expect(row.recovery_detail).toBeNull();
+	});
+
 	it('returns interrupted without recording when the file vanishes after a fix', async () => {
 		const file = seed();
 		const outcome = await verifyAndRecord(
@@ -175,6 +228,7 @@ describe('verifyAndRecord', () => {
 				db,
 				fix: true,
 				logPath,
+				signal: running,
 				verifier: makeVerifier({ detect: true, verify: [corrupt('ID3'), { status: 'healthy' }] }),
 			},
 			file,
@@ -191,6 +245,7 @@ describe('verifyAndRecord', () => {
 				db,
 				fix: true,
 				logPath,
+				signal: running,
 				verifier: makeVerifier({ detect: true, verify: [corrupt('before'), corrupt('after')] }),
 			},
 			file,
@@ -199,8 +254,8 @@ describe('verifyAndRecord', () => {
 		expect(outcome).toEqual({
 			errorOutput: 'before',
 			errorTimestamp: null,
+			issue: { acknowledged: false, kind: 'corrupt' },
 			kind: 'corrupt',
-			known: false,
 			lastHealthyAt: null,
 		});
 		expect(findFileByPath(db, PATH)!.error_output).toBe('before');
@@ -213,6 +268,7 @@ describe('verifyAndRecord', () => {
 				db,
 				fix: true,
 				logPath,
+				signal: running,
 				verifier: makeVerifier({
 					detect: true,
 					fixError: 'cannot strip',
@@ -236,6 +292,7 @@ describe('verifyAndRecord', () => {
 				db,
 				fix: false,
 				logPath,
+				signal: running,
 				verifier: makeVerifier({ detect: true, verify: [corrupt('ID3')] }),
 			},
 			file,
@@ -253,11 +310,20 @@ describe('verifyAndRecord', () => {
 			`UPDATE files SET acknowledged_at = ?, last_healthy_at = ? WHERE current_path = ?`,
 		).run('2026-02-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z', PATH);
 		const outcome = await verifyAndRecord(
-			{ db, fix: false, logPath, verifier: makeVerifier({ verify: [corrupt('LOST_SYNC')] }) },
+			{
+				db,
+				fix: false,
+				logPath,
+				signal: running,
+				verifier: makeVerifier({ verify: [corrupt('LOST_SYNC')] }),
+			},
 			findFileByPath(db, PATH)!,
 		);
 
-		expect(outcome).toMatchObject({ known: true, lastHealthyAt: '2026-01-01T00:00:00.000Z' });
+		expect(outcome).toMatchObject({
+			issue: { acknowledged: true, kind: 'regressed' },
+			lastHealthyAt: '2026-01-01T00:00:00.000Z',
+		});
 		expect(logEntries()).toMatchObject([
 			{ event: 'corrupt', known: true, last_healthy_at: '2026-01-01T00:00:00.000Z', path: PATH },
 		]);
@@ -270,6 +336,7 @@ describe('verifyAndRecord', () => {
 				db,
 				fix: false,
 				logPath,
+				signal: running,
 				verifier: makeVerifier({ detect: true, verify: [corrupt('ID3')] }),
 			},
 			file,
@@ -281,7 +348,13 @@ describe('verifyAndRecord', () => {
 	it('logs nothing for a healthy verdict', async () => {
 		const file = seed();
 		await verifyAndRecord(
-			{ db, fix: false, logPath, verifier: makeVerifier({ verify: [{ status: 'healthy' }] }) },
+			{
+				db,
+				fix: false,
+				logPath,
+				signal: running,
+				verifier: makeVerifier({ verify: [{ status: 'healthy' }] }),
+			},
 			file,
 		);
 
@@ -296,14 +369,13 @@ describe('verifyAndRecord', () => {
 			verify: () => Promise.reject(new Error('flac exploded')),
 		};
 
-		await expect(verifyAndRecord({ db, fix: false, logPath, verifier }, file)).rejects.toThrow(
-			'flac exploded',
-		);
+		await expect(
+			verifyAndRecord({ db, fix: false, logPath, signal: running, verifier }, file),
+		).rejects.toThrow('flac exploded');
 		expect(findFileByPath(db, PATH)!.last_result).toBe('pending');
 	});
 
 	it('returns interrupted without recording when verify throws during shutdown', async () => {
-		vi.mocked(isShuttingDown).mockReturnValueOnce(true);
 		const file = seed();
 		const verifier: FormatVerifier = {
 			extensions: ['.flac'],
@@ -311,7 +383,10 @@ describe('verifyAndRecord', () => {
 			verify: () => Promise.reject(new Error('killed')),
 		};
 
-		const outcome = await verifyAndRecord({ db, fix: false, logPath, verifier }, file);
+		const outcome = await verifyAndRecord(
+			{ db, fix: false, logPath, signal: { aborted: true }, verifier },
+			file,
+		);
 
 		expect(outcome).toEqual({ kind: 'interrupted' });
 		expect(findFileByPath(db, PATH)!.last_result).toBe('pending');
@@ -320,7 +395,13 @@ describe('verifyAndRecord', () => {
 	it('returns interrupted without touching the database', async () => {
 		const file = seed();
 		const outcome = await verifyAndRecord(
-			{ db, fix: false, logPath, verifier: makeVerifier({ verify: [{ status: 'interrupted' }] }) },
+			{
+				db,
+				fix: false,
+				logPath,
+				signal: running,
+				verifier: makeVerifier({ verify: [{ status: 'interrupted' }] }),
+			},
 			file,
 		);
 

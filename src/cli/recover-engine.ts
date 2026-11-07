@@ -1,7 +1,6 @@
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 
-import { isShuttingDown } from '#cli/process-pool.ts';
 import { execFile } from '#shell.ts';
 
 export interface FlacFormat {
@@ -17,7 +16,6 @@ export interface RecoveryEnv {
 	exists(path: string): boolean;
 	probe(path: string): Promise<FlacFormat>;
 	rename(from: string, to: string): Promise<void>;
-	shouldStop(): boolean;
 	testPasses(path: string): Promise<boolean>;
 	unlink(path: string): Promise<void>;
 	utimes(path: string, atimeMs: number, mtimeMs: number): Promise<void>;
@@ -29,7 +27,6 @@ export const flacEngine: RecoveryEnv = {
 	exists: (path) => fs.existsSync(path),
 	probe: probeFlac,
 	rename: (from, to) => fs.promises.rename(from, to),
-	shouldStop: isShuttingDown,
 	testPasses: flacTestPasses,
 	unlink: safeUnlink,
 	utimes: (path, atimeMs, mtimeMs) => fs.promises.utimes(path, atimeMs / 1000, mtimeMs / 1000),

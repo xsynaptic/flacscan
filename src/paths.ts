@@ -33,6 +33,15 @@ function listedEntry(directory: string, name: string): Lookup {
 	return match === undefined ? 'missing' : { spelled: match };
 }
 
+function statResolved(resolved: string): SpelledStat {
+	try {
+		return { kind: 'present', stats: fs.statSync(resolved) };
+	} catch (error) {
+		if (failedLookup(error) === 'missing') return { kind: 'missing' };
+		return { error: String(error), kind: 'unreadable' };
+	}
+}
+
 function onDiskEntry(directory: string, name: string): Lookup {
 	const entryPath = path.join(directory, name);
 	let realName: string;
@@ -60,16 +69,22 @@ function spellDirectory(directory: string): Lookup {
 	return { spelled };
 }
 
-export function existsAsSpelled(filePath: string): boolean {
+export type SpelledStat =
+	| { error: string; kind: 'unreadable' }
+	| { kind: 'missing' }
+	| { kind: 'present'; stats: fs.Stats };
+
+export function statAsSpelled(filePath: string): SpelledStat {
 	const resolved = path.resolve(filePath);
 	const directory = path.dirname(resolved);
-	if (directory === resolved) return true;
+	if (directory === resolved) return statResolved(resolved);
 	const parent = spellDirectory(directory);
-	if (parent === 'unreadable') return fs.existsSync(resolved);
-	if (parent === 'missing' || parent.spelled !== directory) return false;
+	if (parent === 'unreadable') return statResolved(resolved);
+	if (parent === 'missing' || parent.spelled !== directory) return { kind: 'missing' };
 	const entry = onDiskEntry(directory, path.basename(resolved));
-	if (entry === 'unreadable') return fs.existsSync(resolved);
-	return entry !== 'missing' && entry.spelled === path.basename(resolved);
+	if (entry === 'unreadable') return statResolved(resolved);
+	if (entry === 'missing' || entry.spelled !== path.basename(resolved)) return { kind: 'missing' };
+	return statResolved(resolved);
 }
 
 export function onDiskSpelling(directory: string): string {

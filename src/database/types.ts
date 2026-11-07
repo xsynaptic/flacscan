@@ -22,6 +22,11 @@ export interface FileRow {
 	updated_at: string;
 }
 
+export interface FileIdentity {
+	mtime: string;
+	size: number;
+}
+
 export type FileStatus = 'corrupt' | 'healthy' | 'pending';
 
 export type RecoveryResult = 'recovered' | 'unsuitable';
@@ -32,4 +37,9 @@ export interface UnreadableFileRow {
 	error_output: string;
 	first_seen_at: string;
 	updated_at: string;
+}
+
+export interface Sighting {
+	identity: FileIdentity;
+	path: string;
 }

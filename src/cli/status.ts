@@ -1,8 +1,11 @@
 import chalk from 'chalk';
 import { defineCommand } from 'citty';
 
+import type { IssueCounts } from '#database/issues.ts';
+
 import { runCommand } from '#cli/run-command.ts';
 import { sharedArguments } from '#cli/shared-arguments.ts';
+import { countIssues, listIssues } from '#database/issues.ts';
 import { getStats } from '#database/queries.ts';
 import { checkMountedPaths } from '#discovery.ts';
 
@@ -26,10 +29,11 @@ export const statusCommand = defineCommand({
 	async run({ args }) {
 		await runCommand(args, {}, (db, config) => {
 			const stats = getStats(db);
+			const counts = countIssues(listIssues(db));
 			const mountCheck = checkMountedPaths(config.directories);
 
 			console.log(chalk.bold('\nflacscan status\n'));
-			printCounts(stats);
+			printCounts(stats, counts);
 			printRecovery(stats.recoveryBreakdown);
 
 			console.log(chalk.bold('\n  Configured paths:'));
@@ -45,28 +49,28 @@ export const statusCommand = defineCommand({
 	},
 });
 
-function printCounts(stats: Stats) {
-	const corruptColor = stats.newCorrupt > 0 ? chalk.red : plain;
-	const regressedColor = stats.newRegressed > 0 ? chalk.red : plain;
-	const unreadableColor = stats.newUnreadable > 0 ? chalk.red : plain;
+function printCounts(stats: Stats, counts: IssueCounts) {
+	const corruptColor = counts.newCorrupt > 0 ? chalk.red : plain;
+	const regressedColor = counts.newRegressed > 0 ? chalk.red : plain;
+	const unreadableColor = counts.newUnreadable > 0 ? chalk.red : plain;
 
 	console.log(`  Total files:      ${chalk.bold(String(stats.total))}`);
 	console.log(`  Healthy:          ${chalk.green(String(stats.healthy))}`);
 	console.log(
-		`  Corrupt:          ${corruptColor(String(stats.corrupt))} (${String(stats.newCorrupt)} new, ${String(stats.corrupt - stats.newCorrupt)} accepted)`,
+		`  Corrupt:          ${corruptColor(String(counts.corrupt))} (${String(counts.newCorrupt)} new, ${String(counts.corrupt - counts.newCorrupt)} accepted)`,
 	);
-	if (stats.regressed > 0) {
+	if (counts.regressed > 0) {
 		console.log(
-			`  Regressed:        ${regressedColor(String(stats.regressed))} (${String(stats.newRegressed)} new, ${String(stats.regressed - stats.newRegressed)} accepted)`,
+			`  Regressed:        ${regressedColor(String(counts.regressed))} (${String(counts.newRegressed)} new, ${String(counts.regressed - counts.newRegressed)} accepted)`,
 		);
 	}
 	console.log(`  Pending:          ${String(stats.pending)}`);
 	console.log(
-		`  Unreadable:       ${unreadableColor(String(stats.unreadable))} (${String(stats.newUnreadable)} new, ${String(stats.unreadable - stats.newUnreadable)} accepted)`,
+		`  Unreadable:       ${unreadableColor(String(counts.unreadable))} (${String(counts.newUnreadable)} new, ${String(counts.unreadable - counts.newUnreadable)} accepted)`,
 	);
 
-	const totalIssues = stats.corrupt + stats.unreadable;
-	if (stats.newCorrupt + stats.newUnreadable === 0 && totalIssues > 0) {
+	const totalIssues = counts.corrupt + counts.unreadable;
+	if (counts.newCorrupt + counts.newUnreadable === 0 && totalIssues > 0) {
 		console.log(chalk.green('  No new issues.'));
 	}
 }

@@ -13,13 +13,16 @@ import type { FormatVerifier } from '#verifiers/types.ts';
 
 import { runDiscovery } from '#cli/scan-discover.ts';
 import { runVerification } from '#cli/scan-verify.ts';
-import { acknowledgeAllIssues, findFileByPath, getRegressedFiles } from '#database/queries.ts';
+import { listIssues } from '#database/issues.ts';
+import { acknowledgeAllIssues, findFileByPath } from '#database/queries.ts';
 import { initializeSchema } from '#database/schema.ts';
 import { discoverFiles } from '#discovery.ts';
 
 import { caseInsensitiveTmp, makeTestConfig } from '../helpers.ts';
 
 vi.mock('#metadata.ts', () => ({ extractMetadata: () => Promise.resolve(null) }));
+
+const running = { aborted: false };
 
 const verifier: FormatVerifier = {
 	extensions: ['.flac'],
@@ -66,16 +69,20 @@ function freshInstance(bad: boolean): Instance {
 
 async function scanCollection(db: Database.Database, root: string, config: FlacScanConfig) {
 	const { files, mountCheck } = await discoverFiles([root], verifier.extensions);
-	const discovery = await runDiscovery(db, config, { files, walked: mountCheck.available });
+	const discovery = await runDiscovery(
+		{ config, db, signal: running },
+		{ files, walked: mountCheck.available },
+	);
 	const verification = await runVerification(db, config, {
 		directories: mountCheck.available,
+		signal: running,
 		verifier: verifier,
 	});
 	return {
 		discovery,
 		files,
-		newCorrupt: verification?.newCorrupt ?? 0,
-		newRegressed: verification?.newRegressed ?? 0,
+		newCorrupt: verification?.stats.newCorrupt ?? 0,
+		newRegressed: verification?.stats.newRegressed ?? 0,
 	};
 }
 
@@ -587,7 +594,9 @@ describe('scan lifecycle against a reference model', () => {
 			const { newRegressed } = await collection.scan();
 			const moved = collection.rowFor('moved.flac');
 			const rewritten = collection.rowFor('rewritten.flac');
-			const listed = getRegressedFiles(collection.db).map((row) => path.basename(row.current_path));
+			const listed = listIssues(collection.db)
+				.filter((issue) => issue.kind === 'regressed')
+				.map((issue) => path.basename(issue.row.current_path));
 			collection.db.close();
 
 			expect(healthyAt).toEqual(expect.any(String));

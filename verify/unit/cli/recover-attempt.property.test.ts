@@ -4,10 +4,11 @@ import { describe, expect, it } from 'vitest';
 
 import type { RecoverItem } from '#cli/recover-attempt.ts';
 import type { FlacFormat, RecoveryEnv } from '#cli/recover-engine.ts';
+import type { StopSignal } from '#process-pool.ts';
 
 import { attemptRecovery } from '#cli/recover-attempt.ts';
 import { DEFAULT_CONFIG } from '#config/types.ts';
-import { findFileByPath, updateVerificationResult, upsertFile } from '#database/queries.ts';
+import { findFileByPath, recordReadable, recordVerdict } from '#database/queries.ts';
 import { initializeSchema } from '#database/schema.ts';
 
 const src = '/music/song.flac';
@@ -56,8 +57,13 @@ function makeFakeEnv(plan: FaultPlan) {
 			files.delete(src);
 		}
 	}
+	const signal: StopSignal = {
+		get aborted() {
+			return plan.stopAfterCall !== null && calls >= plan.stopAfterCall;
+		},
+	};
 	function killedByCtrlC() {
-		const killed = plan.ctrlCKillsChildren && env.shouldStop();
+		const killed = plan.ctrlCKillsChildren && signal.aborted;
 		if (killed) killedStepSeen = true;
 		return killed;
 	}
@@ -94,7 +100,6 @@ function makeFakeEnv(plan: FaultPlan) {
 			files.set(to, file);
 			return Promise.resolve();
 		},
-		shouldStop: () => plan.stopAfterCall !== null && calls >= plan.stopAfterCall,
 		testPasses(path) {
 			step();
 			const file = files.get(path);
@@ -116,12 +121,12 @@ function makeFakeEnv(plan: FaultPlan) {
 		},
 	};
 
-	return { env, files, killedStepSeen: () => killedStepSeen, touchedPaths };
+	return { env, files, killedStepSeen: () => killedStepSeen, signal, touchedPaths };
 }
 
 function seedCorruptRow(db: BetterSqlite3.Database): RecoverItem {
-	upsertFile(db, { current_path: src, file_mtime: null, file_size: null });
-	updateVerificationResult(db, src, { last_result: 'corrupt' });
+	recordReadable(db, [{ identity: { mtime: '2025-01-01T00:00:00.000Z', size: 100 }, path: src }]);
+	recordVerdict(db, src, { errorOutput: 'LOST_SYNC', errorTimestamp: null, status: 'corrupt' });
 	return {
 		atimeMs: 1000,
 		dest,
@@ -139,9 +144,9 @@ describe('attemptRecovery under generated failures', () => {
 		async (plan) => {
 			const db = new BetterSqlite3(':memory:');
 			initializeSchema(db);
-			const { env, files, killedStepSeen, touchedPaths } = makeFakeEnv(plan);
+			const { env, files, killedStepSeen, signal, touchedPaths } = makeFakeEnv(plan);
 
-			const result = await attemptRecovery({ config, db, env }, seedCorruptRow(db));
+			const result = await attemptRecovery({ config, db, env, signal }, seedCorruptRow(db));
 			const stored = findFileByPath(db, src)!.recovery_result;
 			db.close();
 
@@ -167,9 +172,9 @@ describe('attemptRecovery under generated failures', () => {
 		async (plan) => {
 			const db = new BetterSqlite3(':memory:');
 			initializeSchema(db);
-			const { env, touchedPaths } = makeFakeEnv(plan);
+			const { env, signal, touchedPaths } = makeFakeEnv(plan);
 
-			const result = await attemptRecovery({ config, db, env }, seedCorruptRow(db));
+			const result = await attemptRecovery({ config, db, env, signal }, seedCorruptRow(db));
 			const stored = findFileByPath(db, src)!.recovery_result;
 			db.close();
 
@@ -185,8 +190,8 @@ describe('attemptRecovery under generated failures', () => {
 		for (const plan of plans) {
 			const db = new BetterSqlite3(':memory:');
 			initializeSchema(db);
-			const { env } = makeFakeEnv(plan);
-			const result = await attemptRecovery({ config, db, env }, seedCorruptRow(db));
+			const { env, signal } = makeFakeEnv(plan);
+			const result = await attemptRecovery({ config, db, env, signal }, seedCorruptRow(db));
 			db.close();
 			reachedKinds.add(result.kind);
 		}

@@ -1,5 +1,11 @@
 # flacscan
 
+## 4.3.1
+
+### Patch Changes
+
+- An unreadable file is no longer pruned or reset: it keeps its row, acceptance and healthy history, and its unreadable entry clears once it reads again; `--fix` also clears a stale recovery outcome so `recover` offers the file again
+
 ## 4.3.0
 
 ### Minor Changes

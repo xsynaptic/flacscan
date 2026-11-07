@@ -1,15 +1,20 @@
 import type Database from 'better-sqlite3';
+import type fs from 'node:fs';
 
 import type { FlacScanConfig } from '#config/types.ts';
-import type { FileRow, FileStatus, RecoveryResult, UnreadableFileRow } from '#database/types.ts';
+import type {
+	FileIdentity,
+	FileRow,
+	FileStatus,
+	RecoveryResult,
+	Sighting,
+} from '#database/types.ts';
 import type { FlacMetadata } from '#metadata.ts';
 
 import { directoryPrefix } from '#paths.ts';
 
 // Re-preparing on every call dominates discovery cost on large collections
 const statementCaches = new WeakMap<Database.Database, Map<string, Database.Statement>>();
-
-const regressedClause = `last_result = 'corrupt' AND last_healthy_at IS NOT NULL`;
 
 export function acknowledgeAllIssues(database: Database.Database): {
 	corrupt: number;
@@ -27,11 +32,51 @@ export function acknowledgeAllIssues(database: Database.Database): {
 	return { corrupt, unreadable };
 }
 
-export function clearRecoveryOutcome(database: Database.Database, currentPath: string) {
-	prepareCached(
+export function applyMoves(database: Database.Database, moves: { from: string; to: string }[]) {
+	if (moves.length === 0) return;
+	const sources = new Set(moves.map((move) => move.from));
+	const now = new Date().toISOString();
+	const rename = prepareCached(
 		database,
-		`UPDATE files SET recovery_attempted_at = NULL, recovery_result = NULL, recovery_lost_samples = NULL, recovery_detail = NULL WHERE current_path = ?`,
-	).run(currentPath);
+		`UPDATE files SET current_path = ?, updated_at = ? WHERE current_path = ?`,
+	);
+	const fileRemoval = prepareCached(database, `DELETE FROM files WHERE current_path = ?`);
+	const unreadableRemoval = prepareCached(
+		database,
+		`DELETE FROM unreadable_files WHERE current_path = ?`,
+	);
+	database.transaction(() => {
+		for (const move of moves) {
+			if (!sources.has(move.to)) fileRemoval.run(move.to);
+		}
+		for (const [index, move] of moves.entries()) {
+			rename.run(`moving:${String(index)}`, now, move.from);
+		}
+		for (const [index, move] of moves.entries()) {
+			rename.run(move.to, now, `moving:${String(index)}`);
+			unreadableRemoval.run(move.to);
+		}
+	})();
+}
+
+export function classifySightings(
+	database: Database.Database,
+	sightings: Sighting[],
+): { changed: Sighting[]; reread: Sighting[] } {
+	const unreadable = new Set(
+		prepareCached(database, `SELECT current_path FROM unreadable_files`).pluck().all() as string[],
+	);
+	const changed: Sighting[] = [];
+	const reread: Sighting[] = [];
+	for (const sighting of sightings) {
+		const row = findFileByPath(database, sighting.path);
+		if (row?.file_mtime !== sighting.identity.mtime || row.file_size !== sighting.identity.size) {
+			changed.push(sighting);
+		} else if (unreadable.has(sighting.path)) {
+			reread.push(sighting);
+		}
+	}
+	return { changed, reread };
 }
 
 export function countRecoveryAttempted(database: Database.Database): number {
@@ -43,65 +88,12 @@ export function countRecoveryAttempted(database: Database.Database): number {
 	).count;
 }
 
-export function deleteFileByPath(database: Database.Database, currentPath: string) {
-	prepareCached(database, `DELETE FROM files WHERE current_path = ?`).run(currentPath);
-}
-
-export function deleteUnreadableByPath(database: Database.Database, currentPath: string) {
-	prepareCached(database, `DELETE FROM unreadable_files WHERE current_path = ?`).run(currentPath);
-}
-
 export function findFileByPath(
 	database: Database.Database,
 	currentPath: string,
 ): FileRow | undefined {
 	return prepareCached(database, `SELECT * FROM files WHERE current_path = ?`).get(currentPath) as
 		FileRow | undefined;
-}
-
-export function findFilesBySizeAndMtime(
-	database: Database.Database,
-	fileSize: number,
-	fileMtime: string,
-): FileRow[] {
-	return prepareCached(database, `SELECT * FROM files WHERE file_size = ? AND file_mtime = ?`).all(
-		fileSize,
-		fileMtime,
-	) as FileRow[];
-}
-
-export function findUnreadableByPath(
-	database: Database.Database,
-	currentPath: string,
-): undefined | UnreadableFileRow {
-	return prepareCached(database, `SELECT * FROM unreadable_files WHERE current_path = ?`).get(
-		currentPath,
-	) as undefined | UnreadableFileRow;
-}
-
-export function getAllUnreadableFiles(database: Database.Database): UnreadableFileRow[] {
-	return prepareCached(
-		database,
-		`SELECT * FROM unreadable_files ORDER BY current_path`,
-	).all() as UnreadableFileRow[];
-}
-
-export function getCorruptFiles(database: Database.Database): FileRow[] {
-	return prepareCached(
-		database,
-		`SELECT * FROM files WHERE last_result = 'corrupt' ORDER BY current_path`,
-	).all() as FileRow[];
-}
-
-export function getCorruptFilesByAcknowledged(
-	database: Database.Database,
-	acknowledged: boolean,
-): FileRow[] {
-	const clause = acknowledged ? 'acknowledged_at IS NOT NULL' : 'acknowledged_at IS NULL';
-	return prepareCached(
-		database,
-		`SELECT * FROM files WHERE last_result = 'corrupt' AND ${clause} ORDER BY current_path`,
-	).all() as FileRow[];
 }
 
 export function getFilesNeedingVerification(
@@ -122,24 +114,13 @@ export function getFilesNeedingVerification(
 		`
     SELECT * FROM files
     WHERE (${clauses})
+      AND NOT EXISTS (SELECT 1 FROM unreadable_files WHERE unreadable_files.current_path = files.current_path)
       AND (last_result = 'pending'
         OR (last_result IN ('healthy', 'corrupt') AND (last_verified_at IS NULL OR last_verified_at < ?)))
     ORDER BY last_verified_at ASC NULLS FIRST
     LIMIT ?
   `,
 	).all(...bounds, cutoff, limits.batch_size) as FileRow[];
-}
-
-export function getPathsUnder(
-	database: Database.Database,
-	table: 'files' | 'unreadable_files',
-	directories: string[],
-): string[] {
-	if (directories.length === 0) return [];
-	const { bounds, clauses } = underDirectories(directories);
-	return prepareCached(database, `SELECT current_path FROM ${table} WHERE ${clauses}`)
-		.pluck()
-		.all(...bounds) as string[];
 }
 
 export function getRecoveryCandidates(database: Database.Database): FileRow[] {
@@ -162,66 +143,17 @@ export function getStats(database: Database.Database) {
 		total += row.count;
 	}
 
-	const unreadable = (
-		prepareCached(database, `SELECT COUNT(*) as count FROM unreadable_files`).get() as {
-			count: number;
-		}
-	).count;
-
-	const newCorrupt = (
-		prepareCached(
-			database,
-			`SELECT COUNT(*) as count FROM files WHERE last_result = 'corrupt' AND acknowledged_at IS NULL`,
-		).get() as { count: number }
-	).count;
-
-	const newUnreadable = (
-		prepareCached(
-			database,
-			`SELECT COUNT(*) as count FROM unreadable_files WHERE acknowledged_at IS NULL`,
-		).get() as { count: number }
-	).count;
-
-	const regressed = prepareCached(
-		database,
-		`SELECT COUNT(*) AS total, COUNT(*) FILTER (WHERE acknowledged_at IS NULL) AS new FROM files WHERE ${regressedClause}`,
-	).get() as { new: number; total: number };
-
 	const recoveryBreakdown = prepareCached(
 		database,
 		`SELECT recovery_result, COUNT(*) as count FROM files WHERE last_result = 'corrupt' GROUP BY recovery_result`,
 	).all() as { count: number; recovery_result: null | RecoveryResult }[];
 
 	return {
-		corrupt: countsByResult.corrupt ?? 0,
 		healthy: countsByResult.healthy ?? 0,
-		newCorrupt,
-		newRegressed: regressed.new,
-		newUnreadable,
 		pending: countsByResult.pending ?? 0,
 		recoveryBreakdown,
-		regressed: regressed.total,
 		total,
-		unreadable,
 	};
-}
-
-export function getRegressedFiles(database: Database.Database): FileRow[] {
-	return prepareCached(
-		database,
-		`SELECT * FROM files WHERE ${regressedClause} ORDER BY current_path`,
-	).all() as FileRow[];
-}
-
-export function getUnreadableFilesByAcknowledged(
-	database: Database.Database,
-	acknowledged: boolean,
-): UnreadableFileRow[] {
-	const clause = acknowledged ? 'acknowledged_at IS NOT NULL' : 'acknowledged_at IS NULL';
-	return prepareCached(
-		database,
-		`SELECT * FROM unreadable_files WHERE ${clause} ORDER BY current_path`,
-	).all() as UnreadableFileRow[];
 }
 
 export function recordRecoveryOutcome(
@@ -244,15 +176,49 @@ export function recordRecoveryOutcome(
 	).run(now, outcome.result, outcome.lostSamples, outcome.detail, now, currentPath);
 }
 
-export function updateFilePath(database: Database.Database, oldPath: string, newPath: string) {
-	const now = new Date().toISOString();
-	prepareCached(
-		database,
-		`UPDATE files SET current_path = ?, updated_at = ? WHERE current_path = ?`,
-	).run(newPath, now, oldPath);
+export function identityOf(stats: fs.Stats): FileIdentity {
+	return { mtime: stats.mtime.toISOString(), size: stats.size };
 }
 
-export function updateMetadata(
+export function pathsUnder(database: Database.Database, roots: string[]): string[] {
+	if (roots.length === 0) return [];
+	const { bounds, clauses } = underDirectories(roots);
+	const files = prepareCached(database, `SELECT current_path FROM files WHERE ${clauses}`)
+		.pluck()
+		.all(...bounds) as string[];
+	const known = new Set(files);
+	const unreadable = (
+		prepareCached(database, `SELECT current_path FROM unreadable_files WHERE ${clauses}`)
+			.pluck()
+			.all(...bounds) as string[]
+	).filter((filePath) => !known.has(filePath));
+	return [...files, ...unreadable];
+}
+
+export function pathsWithIdentity(database: Database.Database, identity: FileIdentity): string[] {
+	return prepareCached(
+		database,
+		`SELECT current_path FROM files WHERE file_size = ? AND file_mtime = ?`,
+	)
+		.pluck()
+		.all(identity.size, identity.mtime) as string[];
+}
+
+export function prunePaths(database: Database.Database, paths: string[]) {
+	const fileRemoval = prepareCached(database, `DELETE FROM files WHERE current_path = ?`);
+	const unreadableRemoval = prepareCached(
+		database,
+		`DELETE FROM unreadable_files WHERE current_path = ?`,
+	);
+	database.transaction(() => {
+		for (const filePath of paths) {
+			fileRemoval.run(filePath);
+			unreadableRemoval.run(filePath);
+		}
+	})();
+}
+
+export function recordMetadata(
 	database: Database.Database,
 	currentPath: string,
 	metadata: FlacMetadata,
@@ -281,15 +247,65 @@ export function updateMetadata(
 	);
 }
 
-export function updateVerificationResult(
+export function recordReadable(database: Database.Database, sightings: Sighting[]) {
+	const now = new Date().toISOString();
+	const upsert = prepareCached(
+		database,
+		`
+    INSERT INTO files (current_path, file_size, file_mtime, first_seen_at, updated_at)
+    VALUES (@path, @size, @mtime, @now, @now)
+    ON CONFLICT (current_path) DO UPDATE SET
+      file_size = excluded.file_size,
+      file_mtime = excluded.file_mtime,
+      updated_at = excluded.updated_at,
+      last_result = 'pending',
+      last_verified_at = NULL,
+      last_healthy_at = NULL,
+      acknowledged_at = NULL,
+      recovery_attempted_at = NULL,
+      recovery_result = NULL,
+      recovery_lost_samples = NULL,
+      recovery_detail = NULL
+    WHERE files.file_size IS NOT excluded.file_size OR files.file_mtime IS NOT excluded.file_mtime
+  `,
+	);
+	const endOverlay = prepareCached(database, `DELETE FROM unreadable_files WHERE current_path = ?`);
+	database.transaction(() => {
+		for (const { identity, path } of sightings) {
+			upsert.run({ mtime: identity.mtime, now, path, size: identity.size });
+			endOverlay.run(path);
+		}
+	})();
+}
+
+export function recordUnreadable(
+	database: Database.Database,
+	entries: { error: string; path: string }[],
+) {
+	const now = new Date().toISOString();
+	const upsert = prepareCached(
+		database,
+		`
+    INSERT INTO unreadable_files (current_path, error_output, first_seen_at, updated_at)
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT (current_path) DO UPDATE SET
+      error_output = excluded.error_output,
+      updated_at = excluded.updated_at
+  `,
+	);
+	database.transaction(() => {
+		for (const { error, path } of entries) upsert.run(path, error, now, now);
+	})();
+}
+
+export function recordVerdict(
 	database: Database.Database,
 	currentPath: string,
-	result: {
-		error_output?: null | string;
-		error_timestamp?: null | string;
-		last_result: FileStatus;
-	},
+	verdict:
+		| { errorOutput: string; errorTimestamp: null | string; status: 'corrupt' }
+		| { status: 'healthy' },
 ) {
+	const corrupt = verdict.status === 'corrupt' ? verdict : undefined;
 	prepareCached(
 		database,
 		`
@@ -306,55 +322,11 @@ export function updateVerificationResult(
   `,
 	).run({
 		currentPath,
-		errorOutput: result.error_output ?? null,
-		errorTimestamp: result.error_timestamp ?? null,
-		lastResult: result.last_result,
+		errorOutput: corrupt?.errorOutput ?? null,
+		errorTimestamp: corrupt?.errorTimestamp ?? null,
+		lastResult: verdict.status,
 		now: new Date().toISOString(),
 	});
-}
-
-export function upsertFile(
-	database: Database.Database,
-	file: {
-		current_path: string;
-		file_mtime: null | string;
-		file_size: null | number;
-	},
-) {
-	const now = new Date().toISOString();
-	prepareCached(
-		database,
-		`
-    INSERT INTO files (current_path, file_size, file_mtime, first_seen_at, updated_at)
-    VALUES (?, ?, ?, ?, ?)
-    ON CONFLICT (current_path) DO UPDATE SET
-      file_size = excluded.file_size,
-      file_mtime = excluded.file_mtime,
-      updated_at = excluded.updated_at,
-      -- changed bytes are a new episode: re-verify from scratch and drop any acknowledgement
-      last_result = 'pending',
-      last_verified_at = NULL,
-      last_healthy_at = NULL,
-      acknowledged_at = NULL
-  `,
-	).run(file.current_path, file.file_size, file.file_mtime, now, now);
-}
-
-export function upsertUnreadableFile(
-	database: Database.Database,
-	file: { current_path: string; error_output: string },
-) {
-	const now = new Date().toISOString();
-	prepareCached(
-		database,
-		`
-    INSERT INTO unreadable_files (current_path, error_output, first_seen_at, updated_at)
-    VALUES (?, ?, ?, ?)
-    ON CONFLICT (current_path) DO UPDATE SET
-      error_output = excluded.error_output,
-      updated_at = excluded.updated_at
-  `,
-	).run(file.current_path, file.error_output, now, now);
 }
 
 function underDirectories(directories: string[]) {

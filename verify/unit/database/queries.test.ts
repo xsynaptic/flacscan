@@ -7,25 +7,27 @@ import type { FileStatus } from '#database/types.ts';
 
 import {
 	acknowledgeAllIssues,
-	clearRecoveryOutcome,
+	applyMoves,
+	classifySightings,
 	countRecoveryAttempted,
-	deleteFileByPath,
 	findFileByPath,
-	findFilesBySizeAndMtime,
-	findUnreadableByPath,
-	getCorruptFiles,
-	getCorruptFilesByAcknowledged,
 	getFilesNeedingVerification,
 	getRecoveryCandidates,
 	getStats,
-	getUnreadableFilesByAcknowledged,
+	pathsUnder,
+	pathsWithIdentity,
+	prunePaths,
+	recordReadable,
 	recordRecoveryOutcome,
-	updateFilePath,
-	updateVerificationResult,
-	upsertFile,
-	upsertUnreadableFile,
+	recordUnreadable,
+	recordVerdict,
 } from '#database/queries.ts';
 import { initializeSchema } from '#database/schema.ts';
+
+import { unreadableRow } from '../helpers.ts';
+
+const identity = { mtime: '2025-01-01T00:00:00.000Z', size: 1024 };
+const changedIdentity = { mtime: '2025-06-01T00:00:00.000Z', size: 2048 };
 
 let db: Database.Database;
 
@@ -37,6 +39,10 @@ beforeEach(() => {
 afterEach(() => {
 	db.close();
 });
+
+function unreadable(filePath: string, error = 'EACCES') {
+	recordUnreadable(db, [{ error, path: filePath }]);
+}
 
 function insertFile(overrides: {
 	acknowledged_at?: null | string;
@@ -76,18 +82,7 @@ function insertFile(overrides: {
 describe('getStats', () => {
 	it('returns zeros for empty database', () => {
 		const stats = getStats(db);
-		expect(stats).toEqual({
-			corrupt: 0,
-			healthy: 0,
-			newCorrupt: 0,
-			newRegressed: 0,
-			newUnreadable: 0,
-			pending: 0,
-			recoveryBreakdown: [],
-			regressed: 0,
-			total: 0,
-			unreadable: 0,
-		});
+		expect(stats).toEqual({ healthy: 0, pending: 0, recoveryBreakdown: [], total: 0 });
 	});
 
 	it('returns correct counts by status', () => {
@@ -103,53 +98,7 @@ describe('getStats', () => {
 		const stats = getStats(db);
 		expect(stats.pending).toBe(1);
 		expect(stats.healthy).toBe(2);
-		expect(stats.corrupt).toBe(1);
 		expect(stats.total).toBe(4);
-	});
-
-	it('counts regressed corrupt files, split by acceptance, ignoring healthy history on healthy rows', () => {
-		const lastHealthy = '2025-06-01T00:00:00.000Z';
-		insertFile({
-			current_path: '/music/a.flac',
-			last_healthy_at: lastHealthy,
-			last_result: 'corrupt',
-		});
-		insertFile({
-			acknowledged_at: '2026-01-01T00:00:00.000Z',
-			current_path: '/music/b.flac',
-			last_healthy_at: lastHealthy,
-			last_result: 'corrupt',
-		});
-		insertFile({ current_path: '/music/c.flac', last_result: 'corrupt' });
-		insertFile({
-			current_path: '/music/d.flac',
-			last_healthy_at: lastHealthy,
-			last_result: 'healthy',
-		});
-
-		expect(getStats(db)).toMatchObject({ newRegressed: 1, regressed: 2 });
-	});
-
-	it('includes unreadable count', () => {
-		upsertUnreadableFile(db, { current_path: '/bad/file.flac', error_output: 'read error' });
-		const stats = getStats(db);
-		expect(stats.unreadable).toBe(1);
-	});
-
-	it('splits corrupt and unreadable into new vs acknowledged', () => {
-		insertFile({ current_path: '/music/new.flac', last_result: 'corrupt' });
-		insertFile({
-			acknowledged_at: '2020-01-01T00:00:00.000Z',
-			current_path: '/music/known.flac',
-			last_result: 'corrupt',
-		});
-		upsertUnreadableFile(db, { current_path: '/bad/x.flac', error_output: 'e' });
-
-		const stats = getStats(db);
-		expect(stats.corrupt).toBe(2);
-		expect(stats.newCorrupt).toBe(1);
-		expect(stats.unreadable).toBe(1);
-		expect(stats.newUnreadable).toBe(1);
 	});
 });
 
@@ -162,7 +111,7 @@ describe('acknowledgement', () => {
 			last_result: 'corrupt',
 		});
 		insertFile({ current_path: '/music/ok.flac', last_result: 'healthy' });
-		upsertUnreadableFile(db, { current_path: '/bad/x.flac', error_output: 'e' });
+		unreadable('/bad/x.flac');
 
 		const counts = acknowledgeAllIssues(db);
 
@@ -174,95 +123,47 @@ describe('acknowledgement', () => {
 		expect(findFileByPath(db, '/music/ok.flac')?.acknowledged_at).toBeNull();
 	});
 
-	it('updateVerificationResult clears the stamp on healthy but keeps it on corrupt', () => {
+	it('recordVerdict clears the stamp on healthy but keeps it on corrupt', () => {
 		insertFile({
 			acknowledged_at: '2020-01-01T00:00:00.000Z',
 			current_path: '/music/a.flac',
 			last_result: 'corrupt',
 		});
 
-		updateVerificationResult(db, '/music/a.flac', { last_result: 'corrupt' });
+		recordVerdict(db, '/music/a.flac', {
+			errorOutput: 'LOST_SYNC',
+			errorTimestamp: null,
+			status: 'corrupt',
+		});
 		expect(findFileByPath(db, '/music/a.flac')?.acknowledged_at).toBe('2020-01-01T00:00:00.000Z');
 
-		updateVerificationResult(db, '/music/a.flac', { last_result: 'healthy' });
+		recordVerdict(db, '/music/a.flac', { status: 'healthy' });
 		expect(findFileByPath(db, '/music/a.flac')?.acknowledged_at).toBeNull();
 	});
 
-	it('upsertFile clears the stamp when content changes', () => {
-		insertFile({
-			acknowledged_at: '2020-01-01T00:00:00.000Z',
-			current_path: '/music/a.flac',
-			file_mtime: '2020-01-01T00:00:00.000Z',
-			file_size: 1,
-			last_result: 'corrupt',
-		});
-
-		upsertFile(db, {
-			current_path: '/music/a.flac',
-			file_mtime: '2026-01-01T00:00:00.000Z',
-			file_size: 2,
-		});
-
-		const row = findFileByPath(db, '/music/a.flac');
-		expect(row?.acknowledged_at).toBeNull();
-		expect(row?.last_result).toBe('pending');
-	});
-
 	it('stamps healthy history on a healthy verdict, keeps it through corrupt ones, and drops it on a content change', () => {
-		insertFile({
-			current_path: '/music/a.flac',
-			file_mtime: '2020-01-01T00:00:00.000Z',
-			file_size: 1,
-		});
+		recordReadable(db, [{ identity, path: '/music/a.flac' }]);
 
-		updateVerificationResult(db, '/music/a.flac', { last_result: 'healthy' });
+		recordVerdict(db, '/music/a.flac', { status: 'healthy' });
 		const healthy = findFileByPath(db, '/music/a.flac');
 		expect(healthy?.last_healthy_at).toBe(healthy?.last_verified_at);
 
-		updateVerificationResult(db, '/music/a.flac', { last_result: 'corrupt' });
+		recordVerdict(db, '/music/a.flac', {
+			errorOutput: 'LOST_SYNC',
+			errorTimestamp: null,
+			status: 'corrupt',
+		});
 		expect(findFileByPath(db, '/music/a.flac')?.last_healthy_at).toBe(healthy?.last_healthy_at);
 
-		upsertFile(db, {
-			current_path: '/music/a.flac',
-			file_mtime: '2026-01-01T00:00:00.000Z',
-			file_size: 2,
-		});
+		recordReadable(db, [{ identity: changedIdentity, path: '/music/a.flac' }]);
 		expect(findFileByPath(db, '/music/a.flac')?.last_healthy_at).toBeNull();
 	});
 
-	it('upsertUnreadableFile keeps the stamp across re-upserts', () => {
-		upsertUnreadableFile(db, { current_path: '/bad/x.flac', error_output: 'first' });
+	it('recordUnreadable keeps the stamp across re-records', () => {
+		unreadable('/bad/x.flac', 'first');
 		acknowledgeAllIssues(db);
-		upsertUnreadableFile(db, { current_path: '/bad/x.flac', error_output: 'second' });
-		expect(findUnreadableByPath(db, '/bad/x.flac')?.acknowledged_at).not.toBeNull();
-	});
-
-	it('partitions corrupt and unreadable rows by acknowledgement', () => {
-		insertFile({ current_path: '/music/new.flac', last_result: 'corrupt' });
-		insertFile({
-			acknowledged_at: '2020-01-01T00:00:00.000Z',
-			current_path: '/music/known.flac',
-			last_result: 'corrupt',
-		});
-		upsertUnreadableFile(db, { current_path: '/bad/new.flac', error_output: 'e' });
-		upsertUnreadableFile(db, { current_path: '/bad/known.flac', error_output: 'e' });
-		db.prepare(`UPDATE unreadable_files SET acknowledged_at = ? WHERE current_path = ?`).run(
-			'2020-01-01T00:00:00.000Z',
-			'/bad/known.flac',
-		);
-
-		expect(getCorruptFilesByAcknowledged(db, false).map((file) => file.current_path)).toEqual([
-			'/music/new.flac',
-		]);
-		expect(getCorruptFilesByAcknowledged(db, true).map((file) => file.current_path)).toEqual([
-			'/music/known.flac',
-		]);
-		expect(getUnreadableFilesByAcknowledged(db, false).map((file) => file.current_path)).toEqual([
-			'/bad/new.flac',
-		]);
-		expect(getUnreadableFilesByAcknowledged(db, true).map((file) => file.current_path)).toEqual([
-			'/bad/known.flac',
-		]);
+		unreadable('/bad/x.flac', 'second');
+		expect(unreadableRow(db, '/bad/x.flac')?.acknowledged_at).not.toBeNull();
 	});
 });
 
@@ -450,6 +351,18 @@ describe('getFilesNeedingVerification', () => {
 		expect(result[0]!.current_path).toBe('/music/100%_done/track.flac');
 	});
 
+	it('skips a row whose path is unreadable right now', () => {
+		insertFile({ current_path: '/music/overlay.flac', last_result: 'pending' });
+		insertFile({ current_path: '/music/readable.flac', last_result: 'pending' });
+		unreadable('/music/overlay.flac');
+
+		const result = getFilesNeedingVerification(db, ['/music/'], {
+			batch_size: 100,
+			rescan_interval_days: 30,
+		});
+		expect(result.map((file) => file.current_path)).toEqual(['/music/readable.flac']);
+	});
+
 	it('does not match a sibling directory that shares a name prefix', () => {
 		insertFile({ current_path: '/music-other/x.flac', last_result: 'pending' });
 
@@ -466,52 +379,102 @@ describe('getFilesNeedingVerification', () => {
 	});
 });
 
-describe('upsertFile', () => {
-	it('inserts a new file', () => {
-		upsertFile(db, {
-			current_path: '/music/test.flac',
-			file_mtime: '2025-01-01T00:00:00.000Z',
-			file_size: 1024,
-		});
-		const row = findFileByPath(db, '/music/test.flac');
-		expect(row).toBeDefined();
-		expect(row!.last_result).toBe('pending');
+describe('recordReadable', () => {
+	it('inserts a new file as pending', () => {
+		recordReadable(db, [{ identity, path: '/music/test.flac' }]);
+
+		const row = findFileByPath(db, '/music/test.flac')!;
+		expect(row.last_result).toBe('pending');
+		expect(row.file_size).toBe(identity.size);
+		expect(row.file_mtime).toBe(identity.mtime);
 	});
 
-	it('on conflict updates stats, preserves first_seen_at, and resets verification state', () => {
-		upsertFile(db, {
-			current_path: '/music/test.flac',
-			file_mtime: '2025-01-01T00:00:00.000Z',
-			file_size: 1024,
-		});
+	it('starts a new episode on a changed identity, preserving first_seen_at', () => {
+		recordReadable(db, [{ identity, path: '/music/test.flac' }]);
 		const first = findFileByPath(db, '/music/test.flac')!;
-		updateVerificationResult(db, '/music/test.flac', {
-			error_output: 'boom',
-			last_result: 'corrupt',
+		recordVerdict(db, '/music/test.flac', {
+			errorOutput: 'boom',
+			errorTimestamp: null,
+			status: 'corrupt',
+		});
+		acknowledgeAllIssues(db);
+		recordRecoveryOutcome(db, '/music/test.flac', {
+			detail: 'too lossy',
+			lostSamples: 1,
+			result: 'unsuitable',
 		});
 
-		upsertFile(db, {
-			current_path: '/music/test.flac',
-			file_mtime: '2025-06-01T00:00:00.000Z',
-			file_size: 2048,
-		});
+		recordReadable(db, [{ identity: changedIdentity, path: '/music/test.flac' }]);
 
 		const updated = findFileByPath(db, '/music/test.flac')!;
-		expect(updated.file_size).toBe(2048);
-		expect(updated.first_seen_at).toBe(first.first_seen_at);
-		expect(updated.last_result).toBe('pending');
-		expect(updated.last_verified_at).toBeNull();
+		expect(updated).toMatchObject({
+			acknowledged_at: null,
+			file_mtime: changedIdentity.mtime,
+			file_size: changedIdentity.size,
+			first_seen_at: first.first_seen_at,
+			last_healthy_at: null,
+			last_result: 'pending',
+			last_verified_at: null,
+			recovery_attempted_at: null,
+			recovery_detail: null,
+			recovery_lost_samples: null,
+			recovery_result: null,
+		});
+	});
+
+	it('leaves the row of an unchanged identity untouched and ends its overlay', () => {
+		recordReadable(db, [{ identity, path: '/music/test.flac' }]);
+		recordVerdict(db, '/music/test.flac', { status: 'healthy' });
+		recordVerdict(db, '/music/test.flac', {
+			errorOutput: 'LOST_SYNC',
+			errorTimestamp: null,
+			status: 'corrupt',
+		});
+		acknowledgeAllIssues(db);
+		recordRecoveryOutcome(db, '/music/test.flac', {
+			detail: 'too lossy',
+			lostSamples: 1,
+			result: 'unsuitable',
+		});
+		unreadable('/music/test.flac');
+		const before = findFileByPath(db, '/music/test.flac')!;
+
+		recordReadable(db, [{ identity, path: '/music/test.flac' }]);
+
+		expect(findFileByPath(db, '/music/test.flac')).toEqual(before);
+		expect(unreadableRow(db, '/music/test.flac')).toBeUndefined();
+	});
+
+	it('promotes an unreadable-only path into a pending row', () => {
+		unreadable('/music/test.flac');
+
+		recordReadable(db, [{ identity, path: '/music/test.flac' }]);
+
+		expect(findFileByPath(db, '/music/test.flac')?.last_result).toBe('pending');
+		expect(unreadableRow(db, '/music/test.flac')).toBeUndefined();
+	});
+
+	it('treats a row with no recorded identity as changed', () => {
+		insertFile({ acknowledged_at: '2020-01-01T00:00:00.000Z', last_result: 'corrupt' });
+
+		recordReadable(db, [{ identity, path: '/music/test.flac' }]);
+
+		expect(findFileByPath(db, '/music/test.flac')).toMatchObject({
+			acknowledged_at: null,
+			file_size: identity.size,
+			last_result: 'pending',
+		});
 	});
 });
 
-describe('updateVerificationResult', () => {
+describe('recordVerdict', () => {
 	it('updates result and error fields, clearing any legacy severity', () => {
 		insertFile({ current_path: '/music/test.flac', error_severity: 'critical' });
 
-		updateVerificationResult(db, '/music/test.flac', {
-			error_output: 'FRAME_CRC_MISMATCH',
-			error_timestamp: 'sample 12345',
-			last_result: 'corrupt',
+		recordVerdict(db, '/music/test.flac', {
+			errorOutput: 'FRAME_CRC_MISMATCH',
+			errorTimestamp: 'sample 12345',
+			status: 'corrupt',
 		});
 
 		const row = findFileByPath(db, '/music/test.flac')!;
@@ -522,16 +485,14 @@ describe('updateVerificationResult', () => {
 		expect(row.last_verified_at).toBeTruthy();
 	});
 
-	it('handles null optional fields', () => {
-		upsertFile(db, {
+	it('clears the error columns on a healthy verdict', () => {
+		insertFile({
 			current_path: '/music/test.flac',
-			file_mtime: null,
-			file_size: null,
+			error_output: 'FRAME_CRC_MISMATCH',
+			last_result: 'corrupt',
 		});
 
-		updateVerificationResult(db, '/music/test.flac', {
-			last_result: 'healthy',
-		});
+		recordVerdict(db, '/music/test.flac', { status: 'healthy' });
 
 		const row = findFileByPath(db, '/music/test.flac')!;
 		expect(row.last_result).toBe('healthy');
@@ -541,42 +502,46 @@ describe('updateVerificationResult', () => {
 	});
 });
 
-describe('deleteFileByPath', () => {
-	it('deletes by current_path', () => {
-		upsertFile(db, {
-			current_path: '/music/test.flac',
-			file_mtime: null,
-			file_size: null,
-		});
-		deleteFileByPath(db, '/music/test.flac');
-		expect(findFileByPath(db, '/music/test.flac')).toBeUndefined();
+describe('prunePaths', () => {
+	it('deletes each path from both tables, leaving other rows', () => {
+		insertFile({ current_path: '/music/overlay.flac' });
+		unreadable('/music/overlay.flac');
+		unreadable('/music/unreadable.flac');
+		insertFile({ current_path: '/music/kept.flac' });
+		unreadable('/music/kept-unreadable.flac');
+
+		prunePaths(db, ['/music/overlay.flac', '/music/unreadable.flac']);
+
+		expect(findFileByPath(db, '/music/overlay.flac')).toBeUndefined();
+		expect(unreadableRow(db, '/music/overlay.flac')).toBeUndefined();
+		expect(unreadableRow(db, '/music/unreadable.flac')).toBeUndefined();
+		expect(findFileByPath(db, '/music/kept.flac')).toBeDefined();
+		expect(unreadableRow(db, '/music/kept-unreadable.flac')).toBeDefined();
 	});
 });
 
-describe('upsertUnreadableFile', () => {
-	it('inserts an unreadable file', () => {
-		upsertUnreadableFile(db, { current_path: '/bad/file.flac', error_output: 'read error' });
-		const stats = getStats(db);
-		expect(stats.unreadable).toBe(1);
+describe('recordUnreadable', () => {
+	it('inserts an unreadable path without touching its files row', () => {
+		recordReadable(db, [{ identity, path: '/music/known.flac' }]);
+		acknowledgeAllIssues(db);
+		const before = findFileByPath(db, '/music/known.flac');
+
+		recordUnreadable(db, [
+			{ error: 'EACCES', path: '/music/known.flac' },
+			{ error: 'read error', path: '/bad/file.flac' },
+		]);
+
+		expect(findFileByPath(db, '/music/known.flac')).toEqual(before);
+		expect(unreadableRow(db, '/music/known.flac')?.error_output).toBe('EACCES');
+		expect(unreadableRow(db, '/bad/file.flac')?.error_output).toBe('read error');
 	});
 
 	it('on conflict updates error_output and updated_at, preserves first_seen_at', () => {
-		upsertUnreadableFile(db, { current_path: '/bad/file.flac', error_output: 'error 1' });
-		const first = db
-			.prepare(`SELECT * FROM unreadable_files WHERE current_path = ?`)
-			.get('/bad/file.flac') as {
-			first_seen_at: string;
-			updated_at: string;
-		};
+		unreadable('/bad/file.flac', 'error 1');
+		const first = unreadableRow(db, '/bad/file.flac')!;
 
-		upsertUnreadableFile(db, { current_path: '/bad/file.flac', error_output: 'error 2' });
-		const second = db
-			.prepare(`SELECT * FROM unreadable_files WHERE current_path = ?`)
-			.get('/bad/file.flac') as {
-			error_output: string;
-			first_seen_at: string;
-			updated_at: string;
-		};
+		unreadable('/bad/file.flac', 'error 2');
+		const second = unreadableRow(db, '/bad/file.flac')!;
 
 		expect(second.error_output).toBe('error 2');
 		expect(second.first_seen_at).toBe(first.first_seen_at);
@@ -585,11 +550,7 @@ describe('upsertUnreadableFile', () => {
 
 describe('findFileByPath', () => {
 	it('returns row when exists', () => {
-		upsertFile(db, {
-			current_path: '/music/test.flac',
-			file_mtime: null,
-			file_size: null,
-		});
+		recordReadable(db, [{ identity, path: '/music/test.flac' }]);
 		const row = findFileByPath(db, '/music/test.flac');
 		expect(row).toBeDefined();
 		expect(row!.current_path).toBe('/music/test.flac');
@@ -600,35 +561,84 @@ describe('findFileByPath', () => {
 	});
 });
 
-describe('findFilesBySizeAndMtime', () => {
-	const MTIME = '2025-01-01T00:00:00.000Z';
+describe('classifySightings', () => {
+	it('splits sightings into changed and reread, leaving unchanged readable ones out', () => {
+		insertFile({ current_path: '/music/same.flac', file_mtime: identity.mtime, file_size: 1024 });
+		insertFile({ current_path: '/music/reread.flac', file_mtime: identity.mtime, file_size: 1024 });
+		insertFile({ current_path: '/music/changed.flac', file_mtime: identity.mtime, file_size: 1 });
+		insertFile({ current_path: '/music/unknown-identity.flac' });
+		unreadable('/music/reread.flac');
+		unreadable('/music/promoted.flac');
 
-	it('matches rows with the exact size and mtime', () => {
-		insertFile({ current_path: '/music/a.flac', file_mtime: MTIME, file_size: 1000 });
-		insertFile({ current_path: '/music/b.flac', file_mtime: MTIME, file_size: 1000 });
-		insertFile({ current_path: '/music/c.flac', file_mtime: MTIME, file_size: 2000 });
-
-		const matches = findFilesBySizeAndMtime(db, 1000, MTIME);
-		expect(matches.map((file) => file.current_path).toSorted((a, b) => a.localeCompare(b))).toEqual(
-			['/music/a.flac', '/music/b.flac'],
+		const { changed, reread } = classifySightings(
+			db,
+			[
+				'/music/same.flac',
+				'/music/reread.flac',
+				'/music/changed.flac',
+				'/music/unknown-identity.flac',
+				'/music/promoted.flac',
+				'/music/new.flac',
+			].map((filePath) => ({ identity, path: filePath })),
 		);
-	});
 
-	it('does not match on a differing size or mtime', () => {
-		insertFile({ current_path: '/music/a.flac', file_mtime: MTIME, file_size: 1000 });
-
-		expect(findFilesBySizeAndMtime(db, 999, MTIME)).toHaveLength(0);
-		expect(findFilesBySizeAndMtime(db, 1000, '2024-01-01T00:00:00.000Z')).toHaveLength(0);
-	});
-
-	it('never matches rows with a NULL mtime', () => {
-		insertFile({ current_path: '/music/a.flac', file_mtime: null, file_size: 1000 });
-
-		expect(findFilesBySizeAndMtime(db, 1000, MTIME)).toHaveLength(0);
+		expect(changed.map((sighting) => sighting.path)).toEqual([
+			'/music/changed.flac',
+			'/music/unknown-identity.flac',
+			'/music/promoted.flac',
+			'/music/new.flac',
+		]);
+		expect(reread.map((sighting) => sighting.path)).toEqual(['/music/reread.flac']);
 	});
 });
 
-describe('updateFilePath', () => {
+describe('pathsWithIdentity', () => {
+	it('matches rows with the exact size and mtime', () => {
+		insertFile({ current_path: '/music/a.flac', file_mtime: identity.mtime, file_size: 1024 });
+		insertFile({ current_path: '/music/b.flac', file_mtime: identity.mtime, file_size: 1024 });
+		insertFile({ current_path: '/music/c.flac', file_mtime: identity.mtime, file_size: 2000 });
+
+		expect(pathsWithIdentity(db, identity).toSorted((a, b) => a.localeCompare(b))).toEqual([
+			'/music/a.flac',
+			'/music/b.flac',
+		]);
+	});
+
+	it('does not match on a differing size or mtime', () => {
+		insertFile({ current_path: '/music/a.flac', file_mtime: identity.mtime, file_size: 1024 });
+
+		expect(pathsWithIdentity(db, { ...identity, size: 999 })).toHaveLength(0);
+		expect(pathsWithIdentity(db, { ...identity, mtime: '2024-01-01T00:00:00.000Z' })).toHaveLength(
+			0,
+		);
+	});
+
+	it('never matches rows with a NULL mtime', () => {
+		insertFile({ current_path: '/music/a.flac', file_mtime: null, file_size: 1024 });
+
+		expect(pathsWithIdentity(db, identity)).toHaveLength(0);
+	});
+});
+
+describe('pathsUnder', () => {
+	it('lists both tables under the roots, files first and each overlay path once', () => {
+		insertFile({ current_path: '/music/b.flac' });
+		insertFile({ current_path: '/music/overlay.flac' });
+		unreadable('/music/a.flac');
+		unreadable('/music/overlay.flac');
+		insertFile({ current_path: '/music-other/x.flac' });
+		unreadable('/elsewhere/y.flac');
+
+		expect(pathsUnder(db, ['/music'])).toEqual([
+			'/music/b.flac',
+			'/music/overlay.flac',
+			'/music/a.flac',
+		]);
+		expect(pathsUnder(db, [])).toEqual([]);
+	});
+});
+
+describe('applyMoves', () => {
 	it('moves the row to the new path, preserving every other column', () => {
 		insertFile({
 			acknowledged_at: '2025-02-02T00:00:00.000Z',
@@ -640,7 +650,7 @@ describe('updateFilePath', () => {
 			last_verified_at: '2025-01-05T00:00:00.000Z',
 		});
 
-		updateFilePath(db, '/music/old.flac', '/music/new.flac');
+		applyMoves(db, [{ from: '/music/old.flac', to: '/music/new.flac' }]);
 
 		expect(findFileByPath(db, '/music/old.flac')).toBeUndefined();
 		const moved = findFileByPath(db, '/music/new.flac')!;
@@ -650,56 +660,49 @@ describe('updateFilePath', () => {
 		expect(moved.last_verified_at).toBe('2025-01-05T00:00:00.000Z');
 		expect(moved.file_size).toBe(1000);
 	});
-});
 
-describe('getCorruptFiles', () => {
-	it('orders by path', () => {
-		insertFile({
-			current_path: '/music/z.flac',
-			error_severity: 'recoverable',
-			last_result: 'corrupt',
-		});
-		insertFile({
-			current_path: '/music/b.flac',
-			error_severity: 'critical',
-			last_result: 'corrupt',
-		});
-		insertFile({
-			current_path: '/music/a.flac',
-			error_severity: 'critical',
-			last_result: 'corrupt',
-		});
-		insertFile({
-			current_path: '/music/x.flac',
-			error_severity: 'unknown',
-			last_result: 'corrupt',
-		});
+	it('swaps two rows', () => {
+		insertFile({ current_path: '/music/left.flac', error_output: 'left' });
+		insertFile({ current_path: '/music/right.flac', error_output: 'right' });
 
-		const result = getCorruptFiles(db);
-		expect(result.map((r) => r.current_path)).toEqual([
-			'/music/a.flac',
-			'/music/b.flac',
-			'/music/x.flac',
-			'/music/z.flac',
+		applyMoves(db, [
+			{ from: '/music/left.flac', to: '/music/right.flac' },
+			{ from: '/music/right.flac', to: '/music/left.flac' },
 		]);
+
+		expect(findFileByPath(db, '/music/left.flac')?.error_output).toBe('right');
+		expect(findFileByPath(db, '/music/right.flac')?.error_output).toBe('left');
 	});
 
-	it('excludes non-corrupt files', () => {
-		insertFile({ current_path: '/music/a.flac', last_result: 'healthy' });
-		insertFile({
-			current_path: '/music/b.flac',
-			error_severity: 'critical',
-			last_result: 'corrupt',
-		});
+	it('follows a chain onto a vacated name', () => {
+		insertFile({ current_path: '/music/1.flac', error_output: 'one' });
+		insertFile({ current_path: '/music/2.flac', error_output: 'two' });
 
-		const result = getCorruptFiles(db);
-		expect(result).toHaveLength(1);
-		expect(result[0]!.current_path).toBe('/music/b.flac');
+		applyMoves(db, [
+			{ from: '/music/1.flac', to: '/music/2.flac' },
+			{ from: '/music/2.flac', to: '/music/3.flac' },
+		]);
+
+		expect(findFileByPath(db, '/music/1.flac')).toBeUndefined();
+		expect(findFileByPath(db, '/music/2.flac')?.error_output).toBe('one');
+		expect(findFileByPath(db, '/music/3.flac')?.error_output).toBe('two');
+	});
+
+	it('replaces a destination row that is not itself moving and ends its overlay', () => {
+		insertFile({ current_path: '/music/kept.flac', error_output: 'kept' });
+		insertFile({ current_path: '/music/overwritten.flac', error_output: 'overwritten' });
+		unreadable('/music/overwritten.flac');
+
+		applyMoves(db, [{ from: '/music/kept.flac', to: '/music/overwritten.flac' }]);
+
+		expect(findFileByPath(db, '/music/kept.flac')).toBeUndefined();
+		expect(findFileByPath(db, '/music/overwritten.flac')?.error_output).toBe('kept');
+		expect(unreadableRow(db, '/music/overwritten.flac')).toBeUndefined();
 	});
 });
 
 describe('recovery outcomes', () => {
-	it('records and clears a recovery outcome', () => {
+	it('records a recovery outcome', () => {
 		insertFile({
 			current_path: '/music/x.flac',
 			error_severity: 'recoverable',
@@ -711,18 +714,11 @@ describe('recovery outcomes', () => {
 			lostSamples: 88_200,
 			result: 'recovered',
 		});
-		let row = findFileByPath(db, '/music/x.flac')!;
+		const row = findFileByPath(db, '/music/x.flac')!;
 		expect(row.recovery_result).toBe('recovered');
 		expect(row.recovery_lost_samples).toBe(88_200);
 		expect(row.recovery_detail).toBeNull();
 		expect(row.recovery_attempted_at).not.toBeNull();
-
-		clearRecoveryOutcome(db, '/music/x.flac');
-		row = findFileByPath(db, '/music/x.flac')!;
-		expect(row.recovery_result).toBeNull();
-		expect(row.recovery_lost_samples).toBeNull();
-		expect(row.recovery_detail).toBeNull();
-		expect(row.recovery_attempted_at).toBeNull();
 	});
 
 	it('counts only corrupt files that have been attempted', () => {
@@ -769,8 +765,8 @@ describe('statement caching', () => {
 	it('keeps statements isolated per database handle', () => {
 		const otherDb = new BetterSqlite3(':memory:');
 		initializeSchema(otherDb);
-		upsertFile(db, { current_path: '/music/first.flac', file_mtime: null, file_size: 1 });
-		upsertFile(otherDb, { current_path: '/music/second.flac', file_mtime: null, file_size: 2 });
+		recordReadable(db, [{ identity: { ...identity, size: 1 }, path: '/music/first.flac' }]);
+		recordReadable(otherDb, [{ identity: { ...identity, size: 2 }, path: '/music/second.flac' }]);
 
 		expect(findFileByPath(db, '/music/first.flac')?.file_size).toBe(1);
 		expect(findFileByPath(db, '/music/second.flac')).toBeUndefined();

@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { directoryPrefix, existsAsSpelled, onDiskSpelling } from '#paths.ts';
+import { directoryPrefix, onDiskSpelling, statAsSpelled } from '#paths.ts';
 
 import { caseInsensitiveTmp } from './helpers.ts';
 
@@ -16,6 +16,10 @@ beforeEach(() => {
 afterEach(() => {
 	fs.rmSync(tempDir, { force: true, recursive: true });
 });
+
+function lookAt(...segments: string[]) {
+	return statAsSpelled(path.join(...segments)).kind;
+}
 
 function touch(...segments: string[]): string {
 	const filePath = path.join(tempDir, ...segments);
@@ -34,65 +38,81 @@ describe('directoryPrefix', () => {
 	});
 });
 
-describe('existsAsSpelled', () => {
-	it('is true for a file under its exact spelling, through a symlinked temp directory', () => {
+describe('statAsSpelled', () => {
+	it('is present for a file under its exact spelling, through a symlinked temp directory', () => {
 		const filePath = touch('Album', 'Track.flac');
+		const look = statAsSpelled(filePath);
 
-		expect(existsAsSpelled(filePath)).toBe(true);
+		expect(look.kind === 'present' && look.stats.isFile()).toBe(true);
 	});
 
-	it('is false for a missing file and for a file under a missing directory', () => {
+	it('is missing for a missing file and for a file under a missing directory', () => {
 		touch('Album', 'Track.flac');
 
-		expect(existsAsSpelled(path.join(tempDir, 'Album', 'Other.flac'))).toBe(false);
-		expect(existsAsSpelled(path.join(tempDir, 'Gone', 'Track.flac'))).toBe(false);
+		expect(lookAt(tempDir, 'Album', 'Other.flac')).toBe('missing');
+		expect(lookAt(tempDir, 'Gone', 'Track.flac')).toBe('missing');
 	});
 
-	it('turns false once a file it already reported is deleted', () => {
+	it('turns missing once a file it already reported is deleted', () => {
 		const filePath = touch('Album', 'Track.flac');
-		expect(existsAsSpelled(filePath)).toBe(true);
+		expect(lookAt(filePath)).toBe('present');
 
 		fs.rmSync(filePath);
 
-		expect(existsAsSpelled(filePath)).toBe(false);
+		expect(lookAt(filePath)).toBe('missing');
 	});
 
-	it('is true for both names of a hard-linked file', () => {
+	it('is present under both names of a hard-linked file', () => {
 		const first = touch('Album', 'Alpha.flac');
 		const second = path.join(tempDir, 'Album', 'beta.flac');
 		fs.linkSync(first, second);
 
-		expect([existsAsSpelled(first), existsAsSpelled(second)]).toEqual([true, true]);
+		expect([lookAt(first), lookAt(second)]).toEqual(['present', 'present']);
 	});
 
 	it('follows a symlinked directory under the spelling of the link', () => {
 		touch('Target', 'Track.flac');
 		fs.symlinkSync(path.join(tempDir, 'Target'), path.join(tempDir, 'Link'));
 
-		expect(existsAsSpelled(path.join(tempDir, 'Link', 'Track.flac'))).toBe(true);
+		expect(lookAt(tempDir, 'Link', 'Track.flac')).toBe('present');
 	});
 
-	it.runIf(caseInsensitiveTmp)('is false for a case alias of the file or of a directory', () => {
+	it.runIf(caseInsensitiveTmp)('is missing for a case alias of the file or of a directory', () => {
 		const filePath = touch('Album', 'Track.flac');
 
-		expect(existsAsSpelled(path.join(tempDir, 'Album', 'track.flac'))).toBe(false);
-		expect(existsAsSpelled(path.join(tempDir, 'album', 'Track.flac'))).toBe(false);
-		expect(existsAsSpelled(filePath)).toBe(true);
+		expect(lookAt(tempDir, 'Album', 'track.flac')).toBe('missing');
+		expect(lookAt(tempDir, 'album', 'Track.flac')).toBe('missing');
+		expect(lookAt(filePath)).toBe('present');
 	});
 
 	it('keeps the spelling of a symlink whose target differs from it only in case', () => {
 		touch('Other', 'album', 'Track.flac');
 		fs.symlinkSync(path.join(tempDir, 'Other', 'album'), path.join(tempDir, 'Album'));
 
-		expect(existsAsSpelled(path.join(tempDir, 'Album', 'Track.flac'))).toBe(true);
+		expect(lookAt(tempDir, 'Album', 'Track.flac')).toBe('present');
 	});
 
-	it.runIf(caseInsensitiveTmp)('is false for a case alias of a symlink', () => {
+	it.runIf(caseInsensitiveTmp)('is missing for a case alias of a symlink', () => {
 		touch('Target', 'Track.flac');
 		fs.symlinkSync(path.join(tempDir, 'Target'), path.join(tempDir, 'Link'));
 
-		expect(existsAsSpelled(path.join(tempDir, 'link', 'Track.flac'))).toBe(false);
+		expect(lookAt(tempDir, 'link', 'Track.flac')).toBe('missing');
 	});
+
+	it.skipIf(process.getuid?.() === 0)(
+		'is unreadable, with the stat error, for a file under a directory it cannot search',
+		() => {
+			const filePath = touch('Locked', 'Track.flac');
+			fs.chmodSync(path.join(tempDir, 'Locked'), 0o000);
+			try {
+				const look = statAsSpelled(filePath);
+				expect(look.kind).toBe('unreadable');
+				expect(look.kind === 'unreadable' && look.error).toContain('EACCES');
+			} finally {
+				fs.chmodSync(path.join(tempDir, 'Locked'), 0o755);
+			}
+		},
+	);
 });
 
 describe('onDiskSpelling', () => {

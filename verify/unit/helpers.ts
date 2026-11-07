@@ -1,3 +1,5 @@
+import type Database from 'better-sqlite3';
+
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -5,6 +7,7 @@ import path from 'node:path';
 import type { FlacScanConfig } from '#config/types.ts';
 
 import { DEFAULT_CONFIG } from '#config/types.ts';
+import { listIssues } from '#database/issues.ts';
 
 export function makeTestConfig(
 	tempDir: string,
@@ -22,3 +25,10 @@ export function makeTestConfig(
 
 export const caseInsensitiveTmp =
 	fs.existsSync(os.tmpdir().toUpperCase()) && fs.existsSync(os.tmpdir().toLowerCase());
+
+export function unreadableRow(db: Database.Database, filePath: string) {
+	for (const issue of listIssues(db)) {
+		if (issue.kind === 'unreadable' && issue.row.current_path === filePath) return issue.row;
+	}
+	return;
+}

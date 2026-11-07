@@ -99,12 +99,12 @@ A file that turns up corrupt after verifying healthy, with no content change in 
 
 ### File categories
 
-| Category       | Meaning                                                    |
-| -------------- | ---------------------------------------------------------- |
-| **healthy**    | Passed `flac -t` (full decode + CRC + MD5 verification)    |
-| **corrupt**    | Failed `flac -t`; run `recover` to see what is salvageable |
-| **unreadable** | File couldn't be stat'd during discovery                   |
-| **pending**    | Discovered but not yet verified                            |
+| Category       | Meaning                                                                    |
+| -------------- | -------------------------------------------------------------------------- |
+| **healthy**    | Passed `flac -t` (full decode + CRC + MD5 verification)                    |
+| **corrupt**    | Failed `flac -t`; run `recover` to see what is salvageable                 |
+| **unreadable** | File couldn't be read; a known file keeps its history until it reads again |
+| **pending**    | Discovered but not yet verified                                            |
 
 ### Recovering files
 

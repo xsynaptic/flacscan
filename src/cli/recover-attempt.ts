@@ -5,6 +5,7 @@ import path from 'node:path';
 import type { FlacFormat, RecoveryEnv } from '#cli/recover-engine.ts';
 import type { FlacScanConfig } from '#config/types.ts';
 import type { FileRow } from '#database/types.ts';
+import type { StopSignal } from '#process-pool.ts';
 import type { RecoveryClassification } from '#recovery.ts';
 
 import { recordRecoveryOutcome } from '#database/queries.ts';
@@ -25,6 +26,7 @@ interface AttemptContext {
 	config: FlacScanConfig;
 	db: Database.Database;
 	env: RecoveryEnv;
+	signal: StopSignal;
 }
 
 type Outcome = Partial<Omit<AttemptResult, 'detail' | 'kind' | 'lostSamples'>> &
@@ -73,12 +75,12 @@ export async function attemptRecovery(
 }
 
 async function judge(
-	{ config, env }: AttemptContext,
+	{ config, env, signal }: AttemptContext,
 	partial: string,
 	stream: Stream,
 ): Promise<Outcome | RecoveryClassification> {
 	const reencodeVerified = await env.testPasses(partial);
-	if (!reencodeVerified && env.shouldStop()) {
+	if (!reencodeVerified && signal.aborted) {
 		// A false verdict during shutdown may just be the child killed by SIGINT; don't persist it
 		await env.unlink(partial);
 		return interrupted;
@@ -101,7 +103,7 @@ async function judge(
 }
 
 async function place(
-	env: RecoveryEnv,
+	{ env, signal }: AttemptContext,
 	item: RecoverItem,
 	accepted: Stream & { lostSamples: null | number },
 ): Promise<Outcome> {
@@ -119,7 +121,7 @@ async function place(
 		await env.rename(partial, dest);
 	} catch (error) {
 		await env.unlink(partial);
-		if (env.shouldStop()) return interrupted;
+		if (signal.aborted) return interrupted;
 		return {
 			...accepted,
 			detail: `could not place recovered file: ${stringifyError(error)}`,
@@ -142,22 +144,23 @@ async function place(
 	};
 }
 
-async function probeSource(env: RecoveryEnv, src: string): Promise<FlacFormat | Outcome> {
+async function probeSource(context: AttemptContext, src: string): Promise<FlacFormat | Outcome> {
 	try {
-		return await env.probe(src);
+		return await context.env.probe(src);
 	} catch (error) {
 		// Metaflac ran but couldn't read the file: a verdict about the file, not a glitch, so record it
-		return stageFailure(env, src, {
+		return stageFailure(context, src, {
 			detail: `metaflac could not read the file: ${stringifyError(error)}`,
 		});
 	}
 }
 
 async function reencode(
-	env: RecoveryEnv,
+	context: AttemptContext,
 	item: RecoverItem,
 	format: FlacFormat,
 ): Promise<number | Outcome> {
+	const { env } = context;
 	const partial = `${item.dest}.partial`;
 	try {
 		await env.decodeReencode(item.src, partial, format);
@@ -165,7 +168,7 @@ async function reencode(
 		return partialFormat.totalSamples;
 	} catch (error) {
 		await env.unlink(partial);
-		return stageFailure(env, item.src, {
+		return stageFailure(context, item.src, {
 			claimedSamples: format.totalSamples,
 			detail: `decode/re-encode failed: ${stringifyError(error)}`,
 			sampleRate: format.sampleRate,
@@ -174,10 +177,9 @@ async function reencode(
 }
 
 async function runAttempt(context: AttemptContext, item: RecoverItem): Promise<Outcome> {
-	const { env } = context;
-	if (env.shouldStop()) return interrupted;
+	if (context.signal.aborted) return interrupted;
 
-	const format = await probeSource(env, item.src);
+	const format = await probeSource(context, item.src);
 	if ('kind' in format) return format;
 
 	const measured = { claimedSamples: format.totalSamples, sampleRate: format.sampleRate };
@@ -190,22 +192,22 @@ async function runAttempt(context: AttemptContext, item: RecoverItem): Promise<O
 		};
 	}
 
-	const delivered = await reencode(env, item, format);
+	const delivered = await reencode(context, item, format);
 	if (typeof delivered !== 'number') return delivered;
 
 	const stream = { ...measured, deliveredSamples: delivered };
 	const verdict = await judge(context, `${item.dest}.partial`, stream);
 	if ('kind' in verdict) return verdict;
 
-	return place(env, item, { ...stream, lostSamples: verdict.lostSamples });
+	return place(context, item, { ...stream, lostSamples: verdict.lostSamples });
 }
 
 function stageFailure(
-	env: RecoveryEnv,
+	{ env, signal }: AttemptContext,
 	src: string,
 	failure: { claimedSamples?: number; detail: string; sampleRate?: number },
 ): Outcome {
-	if (env.shouldStop()) return interrupted;
+	if (signal.aborted) return interrupted;
 	if (!env.exists(src)) {
 		return {
 			...failure,

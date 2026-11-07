@@ -2,11 +2,13 @@ import type Database from 'better-sqlite3';
 
 import fs from 'node:fs';
 
+import type { CorruptKind } from '#database/issues.ts';
 import type { FileRow } from '#database/types.ts';
+import type { StopSignal } from '#process-pool.ts';
 import type { FormatVerifier, VerificationResult } from '#verifiers/types.ts';
 
-import { isShuttingDown } from '#cli/process-pool.ts';
-import { updateMetadata, updateVerificationResult, upsertFile } from '#database/queries.ts';
+import { classifyCorrupt } from '#database/issues.ts';
+import { identityOf, recordMetadata, recordReadable, recordVerdict } from '#database/queries.ts';
 import { logCorruption, logFixApplied, logFixDetected, logFixFailed } from '#logging/scan-log.ts';
 import { extractMetadata } from '#metadata.ts';
 
@@ -22,6 +24,7 @@ interface VerifyContext {
 	db: Database.Database;
 	fix: boolean;
 	logPath: string;
+	signal: StopSignal;
 	verifier: FormatVerifier;
 }
 
@@ -32,8 +35,8 @@ export type VerifyOutcome =
 			errorOutput: string;
 			errorTimestamp: null | string;
 			fix?: FixAnnotation;
+			issue: { acknowledged: boolean; kind: CorruptKind };
 			kind: 'corrupt';
-			known: boolean;
 			lastHealthyAt: null | string;
 	  }
 	| { kind: 'fixed'; label: string }
@@ -44,14 +47,14 @@ export async function verifyAndRecord(
 	context: VerifyContext,
 	file: FileRow,
 ): Promise<VerifyOutcome> {
-	const { db, verifier } = context;
+	const { db, signal, verifier } = context;
 	const filePath = file.current_path;
 
-	const result = await verifyOnce(verifier, filePath);
+	const result = await verifyOnce(verifier, filePath, signal);
 	if (result.status === 'interrupted') return { kind: 'interrupted' };
 
 	if (result.status === 'healthy') {
-		updateVerificationResult(db, filePath, { last_result: 'healthy' });
+		recordVerdict(db, filePath, { status: 'healthy' });
 		return { kind: 'healthy' };
 	}
 
@@ -63,16 +66,11 @@ export async function verifyAndRecord(
 	return {
 		errorOutput: result.errorOutput,
 		errorTimestamp: result.errorTimestamp,
+		issue: classifyCorrupt(file),
 		kind: 'corrupt',
-		known: isKnown(file),
 		lastHealthyAt: file.last_healthy_at,
 		...(repair.annotation && { fix: repair.annotation }),
 	};
-}
-
-// Pre-verification row: acknowledged means this corruption was already triaged
-function isKnown(file: FileRow): boolean {
-	return file.acknowledged_at !== null;
 }
 
 function isMetadataEmpty(file: FileRow): boolean {
@@ -85,14 +83,14 @@ function recordCorrupt(
 	result: Extract<VerificationResult, { status: 'corrupt' }>,
 ) {
 	// Record the original verify error, not the post-fix re-verify's
-	updateVerificationResult(db, file.current_path, {
-		error_output: result.errorOutput,
-		error_timestamp: result.errorTimestamp,
-		last_result: 'corrupt',
+	recordVerdict(db, file.current_path, {
+		errorOutput: result.errorOutput,
+		errorTimestamp: result.errorTimestamp,
+		status: 'corrupt',
 	});
 	logCorruption(logPath, file.current_path, {
 		details: result.errorOutput.replaceAll('\n', ' '),
-		known: isKnown(file),
+		known: file.acknowledged_at !== null,
 		lastHealthyAt: file.last_healthy_at,
 	});
 }
@@ -100,7 +98,7 @@ function recordCorrupt(
 async function refreshMissingMetadata(db: Database.Database, file: FileRow) {
 	if (!isMetadataEmpty(file)) return;
 	const metadata = await extractMetadata(file.current_path);
-	if (metadata) updateMetadata(db, file.current_path, metadata);
+	if (metadata) recordMetadata(db, file.current_path, metadata);
 }
 
 function recordFixed(db: Database.Database, filePath: string): boolean {
@@ -111,12 +109,8 @@ function recordFixed(db: Database.Database, filePath: string): boolean {
 		// File vanished after the fix; the next scan will prune or rediscover it
 		return false;
 	}
-	upsertFile(db, {
-		current_path: filePath,
-		file_mtime: stat.mtime.toISOString(),
-		file_size: stat.size,
-	});
-	updateVerificationResult(db, filePath, { last_result: 'healthy' });
+	recordReadable(db, [{ identity: identityOf(stat), path: filePath }]);
+	recordVerdict(db, filePath, { status: 'healthy' });
 	return true;
 }
 
@@ -146,12 +140,16 @@ async function repairOrAnnotate(
 	return { kind: 'fixed', label: fixer.label };
 }
 
-async function verifyOnce(verifier: FormatVerifier, filePath: string): Promise<VerificationResult> {
+async function verifyOnce(
+	verifier: FormatVerifier,
+	filePath: string,
+	signal: StopSignal,
+): Promise<VerificationResult> {
 	try {
 		return await verifier.verify(filePath);
 	} catch (error) {
 		// A throw is a tool failure, not a file verdict; recording corruption would poison the DB
-		if (isShuttingDown()) return { status: 'interrupted' };
+		if (signal.aborted) return { status: 'interrupted' };
 		throw error;
 	}
 }

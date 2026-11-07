@@ -1,6 +1,7 @@
 import chalk from 'chalk';
 
-import type { CorruptOutcome } from '#cli/verify-and-record.ts';
+import type { IssueCounts } from '#database/issues.ts';
+import type { CorruptOutcome } from '#verification/verify-and-record.ts';
 
 const ERROR_CODE_PATTERN = /error code \d+:(\S+)/;
 
@@ -8,11 +9,7 @@ export function corruptSummary({
 	corrupt,
 	newCorrupt,
 	newRegressed,
-}: {
-	corrupt: number;
-	newCorrupt: number;
-	newRegressed: number;
-}): string {
+}: Pick<IssueCounts, 'corrupt' | 'newCorrupt' | 'newRegressed'>): string {
 	if (corrupt === 0) return '0 corrupt';
 	const regressed = newRegressed > 0 ? `, ${String(newRegressed)} regressed` : '';
 	return `${String(corrupt)} corrupt (${String(newCorrupt)} new${regressed})`;
@@ -42,9 +39,9 @@ function printFixAnnotation(filePath: string, fix: NonNullable<CorruptOutcome['f
 	console.log(chalk.dim(`          Non-standard ${fix.label} tags found, use --fix to strip`));
 }
 
-function verdictLine(filePath: string, { known, lastHealthyAt }: CorruptOutcome): string {
-	if (known) return chalk.dim(`  CORRUPT (accepted) ${filePath}`);
-	if (lastHealthyAt) return chalk.red(`  REGRESSED ${filePath}`);
+function verdictLine(filePath: string, { issue }: CorruptOutcome): string {
+	if (issue.acknowledged) return chalk.dim(`  CORRUPT (accepted) ${filePath}`);
+	if (issue.kind === 'regressed') return chalk.red(`  REGRESSED ${filePath}`);
 	return chalk.red(`  NEW CORRUPT ${filePath}`);
 }
 

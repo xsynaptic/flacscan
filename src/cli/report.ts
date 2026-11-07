@@ -3,11 +3,15 @@ import { defineCommand } from 'citty';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import type { FileRow, UnreadableFileRow } from '#database/types.ts';
+import type { CorruptKind, Issue } from '#database/issues.ts';
+import type { FileRow } from '#database/types.ts';
 
 import { runCommand } from '#cli/run-command.ts';
 import { sharedArguments } from '#cli/shared-arguments.ts';
-import { getAllUnreadableFiles, getCorruptFiles } from '#database/queries.ts';
+import { listIssues } from '#database/issues.ts';
+
+type CorruptIssue = Extract<Issue, { kind: CorruptKind }>;
+type UnreadableIssue = Extract<Issue, { kind: 'unreadable' }>;
 
 type Palette = ReturnType<typeof formatReport>;
 
@@ -37,9 +41,12 @@ export const reportCommand = defineCommand({
 			const outputFile = args.output;
 			const c = formatReport(!outputFile);
 
-			const corrupt = getCorruptFiles(db);
-			const unreadable = getAllUnreadableFiles(db);
-			const totalIssues = corrupt.length + unreadable.length;
+			const issues = listIssues(db);
+			const corrupt = issues.filter((issue): issue is CorruptIssue => issue.kind !== 'unreadable');
+			const unreadable = issues.filter(
+				(issue): issue is UnreadableIssue => issue.kind === 'unreadable',
+			);
+			const totalIssues = issues.length;
 
 			const lines = [c.bold('\nflacscan report\n')];
 			if (totalIssues === 0) {
@@ -50,22 +57,22 @@ export const reportCommand = defineCommand({
 					...corruptSection(
 						c,
 						'New corrupt files',
-						corrupt.filter((file) => file.acknowledged_at === null),
+						corrupt.filter((issue) => !issue.acknowledged),
 					),
 					...corruptSection(
 						c,
 						'Accepted corrupt files',
-						corrupt.filter((file) => file.acknowledged_at !== null),
+						corrupt.filter((issue) => issue.acknowledged),
 					),
 					...unreadableSection(
 						c,
 						'New unreadable files',
-						unreadable.filter((file) => file.acknowledged_at === null),
+						unreadable.filter((issue) => !issue.acknowledged),
 					),
 					...unreadableSection(
 						c,
 						'Accepted unreadable files',
-						unreadable.filter((file) => file.acknowledged_at !== null),
+						unreadable.filter((issue) => issue.acknowledged),
 					),
 				);
 			}
@@ -95,13 +102,13 @@ function corruptDetails(file: FileRow): string[] {
 	return details;
 }
 
-function corruptSection(c: Palette, heading: string, files: FileRow[]): string[] {
-	if (files.length === 0) return [];
+function corruptSection(c: Palette, heading: string, issues: CorruptIssue[]): string[] {
+	if (issues.length === 0) return [];
 	return [
-		c.bold(`  ${heading} (${String(files.length)}):\n`),
-		...files.flatMap((file) => [
-			`    ${c.red(file.last_healthy_at ? '[regressed]' : '[corrupt]')} ${file.current_path}`,
-			...corruptDetails(file),
+		c.bold(`  ${heading} (${String(issues.length)}):\n`),
+		...issues.flatMap(({ kind, row }) => [
+			`    ${c.red(`[${kind}]`)} ${row.current_path}`,
+			...corruptDetails(row),
 			'',
 		]),
 	];
@@ -120,14 +127,14 @@ function recoveryLine(file: FileRow, result: string): string {
 	return `      Recovery: ${result}${lost}${why}`;
 }
 
-function unreadableSection(c: Palette, heading: string, files: UnreadableFileRow[]): string[] {
-	if (files.length === 0) return [];
+function unreadableSection(c: Palette, heading: string, issues: UnreadableIssue[]): string[] {
+	if (issues.length === 0) return [];
 	return [
-		c.bold(`  ${heading} (${String(files.length)}):\n`),
-		...files.flatMap((file) => [
-			`    ${c.red('[unreadable]')} ${file.current_path}`,
-			...(file.acknowledged_at ? [`      Accepted: ${file.acknowledged_at}`] : []),
-			errorLine(file.error_output),
+		c.bold(`  ${heading} (${String(issues.length)}):\n`),
+		...issues.flatMap(({ row }) => [
+			`    ${c.red('[unreadable]')} ${row.current_path}`,
+			...(row.acknowledged_at ? [`      Accepted: ${row.acknowledged_at}`] : []),
+			errorLine(row.error_output),
 			'',
 		]),
 	];
