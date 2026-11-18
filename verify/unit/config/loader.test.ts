@@ -4,7 +4,6 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { loadConfig } from '#config/loader.ts';
-import { DEFAULT_CONFIG } from '#config/types.ts';
 
 let tempDir: string;
 
@@ -109,7 +108,6 @@ describe('loadConfig', () => {
 	it('defaults notify to false', () => {
 		const config = writeConfig(tempDir, 'directories:\n  - /m');
 
-		expect(loadConfig({ config }).notify).toBe(DEFAULT_CONFIG.notify);
 		expect(loadConfig({ config }).notify).toBe(false);
 	});
 
@@ -160,7 +158,7 @@ describe('loadConfig', () => {
 		});
 
 		expect(result.directories).toEqual(['/Volumes/Music']);
-		expect(result.batch_size).toBe(DEFAULT_CONFIG.batch_size);
+		expect(result.batch_size).toBe(100);
 	});
 
 	it('throws when no directories are configured and none passed', () => {

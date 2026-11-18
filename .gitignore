@@ -8,3 +8,4 @@ db/
 samples/
 .cache/
 temp/
+.stryker-tmp/

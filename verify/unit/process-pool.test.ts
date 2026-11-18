@@ -28,6 +28,7 @@ describe('processPool', () => {
 		const gates = Array.from({ length: 6 }, () => deferred<undefined>());
 		let inFlight = 0;
 		let maxInFlight = 0;
+		let finished = 0;
 		let index = 0;
 
 		const poolPromise = processPool(gates, { concurrency: 3, signal: running }, async (gate) => {
@@ -35,6 +36,7 @@ describe('processPool', () => {
 			maxInFlight = Math.max(maxInFlight, inFlight);
 			await gate.promise;
 			inFlight--;
+			finished++;
 		});
 
 		while (index < gates.length) {
@@ -44,7 +46,8 @@ describe('processPool', () => {
 
 		await poolPromise;
 
-		expect(maxInFlight).toBeLessThanOrEqual(3);
+		expect(maxInFlight).toBe(3);
+		expect(finished).toBe(gates.length);
 	});
 
 	it('stops pulling work once the signal aborts and leaves the rest unprocessed', async () => {

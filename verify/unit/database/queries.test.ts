@@ -469,7 +469,12 @@ describe('recordReadable', () => {
 
 describe('recordVerdict', () => {
 	it('updates result and error fields, clearing any legacy severity', () => {
-		insertFile({ current_path: '/music/test.flac', error_severity: 'critical' });
+		insertFile({
+			current_path: '/music/test.flac',
+			error_severity: 'critical',
+			last_verified_at: '2000-01-01T00:00:00.000Z',
+		});
+		const before = Date.now();
 
 		recordVerdict(db, '/music/test.flac', {
 			errorOutput: 'FRAME_CRC_MISMATCH',
@@ -482,7 +487,7 @@ describe('recordVerdict', () => {
 		expect(row.error_severity).toBeNull();
 		expect(row.error_output).toBe('FRAME_CRC_MISMATCH');
 		expect(row.error_timestamp).toBe('sample 12345');
-		expect(row.last_verified_at).toBeTruthy();
+		expect(Date.parse(row.last_verified_at ?? '')).toBeGreaterThanOrEqual(before);
 	});
 
 	it('clears the error columns on a healthy verdict', () => {

@@ -116,14 +116,14 @@ describe('classifyRecovery', () => {
 
 	it('rounds a loss just over the limit up rather than to the limit', () => {
 		const result = classifyRecovery({
-			claimedSamples: 1000,
-			deliveredSamples: 696,
+			claimedSamples: 5000,
+			deliveredSamples: 1999,
 			maxTrailingLossSeconds: 3,
 			reencodeVerified: true,
-			sampleRate: 100,
+			sampleRate: 1000,
 		});
 
-		expect(result.detail).toBe('trailing loss 3.04s exceeds the 3s limit');
+		expect(result.detail).toBe('trailing loss 3.01s exceeds the 3s limit');
 	});
 });
 
