@@ -3,7 +3,16 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { logCorruption, logFileMoved, logScanComplete, logScanStart } from '#logging/scan-log.ts';
+import {
+	logCorruption,
+	logFileMoved,
+	logFixApplied,
+	logFixDetected,
+	logFixFailed,
+	logScanComplete,
+	logScanStart,
+	logUnreadable,
+} from '#logging/scan-log.ts';
 
 let tempDir: string;
 
@@ -30,6 +39,7 @@ function uniqueLogPath(...segments: string[]): string {
 describe('scan-log', () => {
 	it('writes one parseable corruption line', () => {
 		const logPath = uniqueLogPath('a.log');
+		const before = Date.now();
 
 		logCorruption(logPath, '/music/bad.flac', {
 			details: 'decode error',
@@ -48,8 +58,10 @@ describe('scan-log', () => {
 			level: 'error',
 			path: '/music/bad.flac',
 		});
-		const timestamp = Date.parse(String(entry.timestamp));
-		expect(Number.isNaN(timestamp)).toBe(false);
+		const timestamp = String(entry.timestamp);
+		expect(timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+		expect(Date.parse(timestamp)).toBeGreaterThanOrEqual(before);
+		expect(Date.parse(timestamp)).toBeLessThanOrEqual(Date.now());
 	});
 
 	it('appends a separate line per call', () => {
@@ -116,11 +128,52 @@ describe('scan-log', () => {
 		const complete = parseLine(lines[1] ?? '');
 		expect(start).toMatchObject({
 			event: 'scan_start',
+			level: 'info',
 			paths: { available: 2, skipped: ['/Volumes/Gone'], total: 3 },
 		});
 		expect(complete).toMatchObject({
 			event: 'scan_complete',
+			level: 'info',
 			stats: { corrupt: 1, healthy: 9, newCorrupt: 1, newRegressed: 1, pruned: 2, total: 12 },
 		});
+	});
+
+	it.each([
+		{
+			entry: { details: 'Stripped ID3 tags', event: 'id3_fixed', level: 'info' },
+			write: (logPath: string) => {
+				logFixApplied(logPath, '/music/x.flac', 'ID3');
+			},
+		},
+		{
+			entry: {
+				details: 'Non-standard ID3 tags found, use --fix to strip',
+				event: 'id3_detected',
+				level: 'warn',
+			},
+			write: (logPath: string) => {
+				logFixDetected(logPath, '/music/x.flac', 'ID3');
+			},
+		},
+		{
+			entry: { error: 'metaflac exited 1', event: 'id3_fix_failed', level: 'error' },
+			write: (logPath: string) => {
+				logFixFailed(logPath, '/music/x.flac', { error: 'metaflac exited 1', label: 'ID3' });
+			},
+		},
+		{
+			entry: { error: 'EACCES', event: 'unreadable', level: 'error' },
+			write: (logPath: string) => {
+				logUnreadable(logPath, '/music/x.flac', 'EACCES');
+			},
+		},
+	])('writes the $entry.event entry exactly', ({ entry, write }) => {
+		const logPath = uniqueLogPath('e.log');
+
+		write(logPath);
+
+		const { timestamp, ...written } = parseLine(readLines(logPath)[0] ?? '');
+		expect(written).toEqual({ ...entry, path: '/music/x.flac' });
+		expect(timestamp).toEqual(expect.any(String));
 	});
 });

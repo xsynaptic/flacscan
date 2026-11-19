@@ -4,6 +4,7 @@ import BetterSqlite3 from 'better-sqlite3';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import ora from 'ora';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { FormatVerifier } from '#verifiers/types.ts';
@@ -86,12 +87,17 @@ describe('runVerification', () => {
 			},
 		);
 
+		const succeed = vi.spyOn(ora(), 'succeed');
+
 		const result = await runVerification(db, makeTestConfig(tempDir, { fix: true }), {
 			directories: [tempDir],
 			signal: running,
 			verifier: verifier,
 		});
 
+		expect(succeed).toHaveBeenCalledWith(
+			'Verified 4 files. 1 healthy, 1 corrupt (1 new), 1 fixed, 1 pruned.',
+		);
 		expect(result?.exitCode).toBe(1);
 		expect(result?.stats).toMatchObject({ corrupt: 1, fixed: 1, healthy: 1, pruned: 1 });
 		const lines = vi.mocked(console.log).mock.calls.map(([line]) => String(line));
@@ -99,10 +105,30 @@ describe('runVerification', () => {
 			expect.arrayContaining([
 				expect.stringContaining(`PRUNED ${vanished}`),
 				expect.stringContaining(`ID3_FIXED ${fixable}`),
+				'          Stripped ID3 tags, verification passed',
 				expect.stringContaining(`NEW CORRUPT ${corrupt}`),
 			]),
 		);
 		expect(lines.filter((line) => line.includes('healthy.flac'))).toEqual([]);
+	});
+
+	it('reports an interrupted pass with how far it got', async () => {
+		seedFile('first.flac');
+		seedFile('second.flac');
+		const signal = { aborted: false };
+		const warn = vi.spyOn(ora(), 'warn');
+		const verifier = fakeVerifier(() => {
+			signal.aborted = true;
+			return Promise.resolve({ status: 'healthy' });
+		});
+
+		await runVerification(db, makeTestConfig(tempDir), {
+			directories: [tempDir],
+			signal,
+			verifier,
+		});
+
+		expect(warn).toHaveBeenCalledWith('Verification interrupted: 1/2 files. 1 healthy, 0 corrupt.');
 	});
 
 	it.skipIf(process.getuid?.() === 0)(
@@ -126,7 +152,11 @@ describe('runVerification', () => {
 
 				expect(result).toMatchObject({ exitCode: 0, stats: { pruned: 0 } });
 				expect(findFileByPath(db, filePath)?.acknowledged_at).toBe('2020-01-01T00:00:00.000Z');
-				expect(vi.mocked(console.log)).not.toHaveBeenCalledWith(expect.stringContaining('PRUNED'));
+				const linesForFile = vi
+					.mocked(console.log)
+					.mock.calls.map(([line]) => String(line))
+					.filter((line) => line.includes(filePath));
+				expect(linesForFile).toEqual([]);
 			} finally {
 				fs.chmodSync(path.join(tempDir, 'locked'), 0o755);
 			}

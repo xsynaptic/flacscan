@@ -495,7 +495,7 @@ function freshCollection() {
 	};
 }
 
-describe('scan lifecycle against a reference model', () => {
+describe('scan lifecycle against a reference model', { shuffle: false }, () => {
 	test.prop([lifecycleCommands(['a.flac', 'A.flac', 'b.flac', 'c.flac'])], { numRuns: 3000 })(
 		'rows are exactly the files, each verdict matches its bytes, and acceptance follows a file that is never duplicated or rewritten through any renames',
 		async (commands) => {

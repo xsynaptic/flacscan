@@ -8,10 +8,6 @@ vi.mock('#shell.ts', () => ({
 }));
 
 describe('osaStringLiteral', () => {
-	it('wraps a plain string in double quotes', () => {
-		expect(osaStringLiteral('hello')).toBe('"hello"');
-	});
-
 	it('escapes embedded double quotes and backslashes', () => {
 		expect(osaStringLiteral('a "b" c')).toBe(String.raw`"a \"b\" c"`);
 		expect(osaStringLiteral(String.raw`path\to`)).toBe(String.raw`"path\\to"`);
@@ -26,13 +22,13 @@ describe('sendNotification', () => {
 		vi.clearAllMocks();
 	});
 
-	it('returns false without spawning on a non-macOS platform', async () => {
+	it('warns and skips the spawn on a non-macOS platform', async () => {
 		Object.defineProperty(process, 'platform', { value: 'linux' });
 		const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
-		const result = await sendNotification('flacscan', 'new corruption');
+		await sendNotification('flacscan', 'new corruption');
 
-		expect(result).toBe(false);
+		expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('only supported on macOS'));
 		expect(execFile).not.toHaveBeenCalled();
 		warnSpy.mockRestore();
 	});
@@ -40,12 +36,22 @@ describe('sendNotification', () => {
 	it('spawns osascript with a display-notification script on macOS', async () => {
 		Object.defineProperty(process, 'platform', { value: 'darwin' });
 
-		const result = await sendNotification('flacscan', 'new corruption');
+		await sendNotification('flacscan', 'new corruption');
 
-		expect(result).toBe(true);
 		expect(execFile).toHaveBeenCalledWith('osascript', [
 			'-e',
 			'display notification "new corruption" with title "flacscan"',
 		]);
+	});
+
+	it('warns and resolves when osascript fails, so a finished scan is not failed', async () => {
+		Object.defineProperty(process, 'platform', { value: 'darwin' });
+		vi.mocked(execFile).mockRejectedValueOnce(new Error('osascript exited 1'));
+		const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+		await sendNotification('flacscan', 'new corruption');
+
+		expect(warnSpy).toHaveBeenCalledWith('Notification failed: osascript exited 1');
+		warnSpy.mockRestore();
 	});
 });

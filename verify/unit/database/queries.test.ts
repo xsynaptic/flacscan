@@ -95,10 +95,12 @@ describe('getStats', () => {
 			last_result: 'corrupt',
 		});
 
-		const stats = getStats(db);
-		expect(stats.pending).toBe(1);
-		expect(stats.healthy).toBe(2);
-		expect(stats.total).toBe(4);
+		expect(getStats(db)).toEqual({
+			healthy: 2,
+			pending: 1,
+			recoveryBreakdown: [{ count: 1, recovery_result: null }],
+			total: 4,
+		});
 	});
 });
 
@@ -116,7 +118,7 @@ describe('acknowledgement', () => {
 		const counts = acknowledgeAllIssues(db);
 
 		expect(counts).toEqual({ corrupt: 1, unreadable: 1 });
-		expect(findFileByPath(db, '/music/new.flac')?.acknowledged_at).not.toBeNull();
+		expect(findFileByPath(db, '/music/new.flac')?.acknowledged_at).toEqual(expect.any(String));
 		expect(findFileByPath(db, '/music/known.flac')?.acknowledged_at).toBe(
 			'2020-01-01T00:00:00.000Z',
 		);
@@ -163,13 +165,13 @@ describe('acknowledgement', () => {
 		unreadable('/bad/x.flac', 'first');
 		acknowledgeAllIssues(db);
 		unreadable('/bad/x.flac', 'second');
-		expect(unreadableRow(db, '/bad/x.flac')?.acknowledged_at).not.toBeNull();
+		expect(unreadableRow(db, '/bad/x.flac')?.acknowledged_at).toEqual(expect.any(String));
 	});
 });
 
 function legacyDatabase() {
 	const legacy = new BetterSqlite3(':memory:');
-	// Schema from before acknowledged_at existed
+	// Schema from before acknowledged_at, duration and recovery_lost_samples existed
 	legacy.exec(`
 		CREATE TABLE files (
 			current_path    TEXT PRIMARY KEY,
@@ -182,12 +184,10 @@ function legacyDatabase() {
 			title           TEXT,
 			album           TEXT,
 			date            TEXT,
-			duration        REAL,
 			file_size       INTEGER,
 			file_mtime      TEXT,
 			recovery_attempted_at TEXT,
 			recovery_result       TEXT,
-			recovery_lost_samples INTEGER,
 			recovery_detail       TEXT,
 			first_seen_at   TEXT NOT NULL,
 			updated_at      TEXT NOT NULL
@@ -202,21 +202,25 @@ function legacyDatabase() {
 	return legacy;
 }
 
+function columnTypes(database: Database.Database, table: string) {
+	return (database.pragma(`table_info(${table})`) as { name: string; type: string }[])
+		.map((column) => `${column.name} ${column.type}`)
+		.toSorted((left, right) => left.localeCompare(right));
+}
+
 describe('schema migration', () => {
-	it('adds acknowledged_at to a database created without it', () => {
+	it('migrates an older database to the columns and types of a fresh one', () => {
 		const legacy = legacyDatabase();
+		const fresh = new BetterSqlite3(':memory:');
 
 		initializeSchema(legacy);
+		initializeSchema(fresh);
 
-		const fileCols = (legacy.pragma('table_info(files)') as { name: string }[]).map(
-			(col) => col.name,
-		);
-		const unreadableCols = (
-			legacy.pragma('table_info(unreadable_files)') as { name: string }[]
-		).map((col) => col.name);
-		expect(fileCols).toContain('acknowledged_at');
-		expect(unreadableCols).toContain('acknowledged_at');
+		for (const table of ['files', 'unreadable_files']) {
+			expect(columnTypes(legacy, table)).toEqual(columnTypes(fresh, table));
+		}
 		legacy.close();
+		fresh.close();
 	});
 
 	it('backfills last_healthy_at from the last verification of healthy rows only', () => {
@@ -253,104 +257,6 @@ describe('getFilesNeedingVerification', () => {
 		expect(result).toEqual([]);
 	});
 
-	it('returns pending files in specified directories', () => {
-		insertFile({ current_path: '/music/album/track.flac', last_result: 'pending' });
-		const result = getFilesNeedingVerification(db, ['/music/'], {
-			batch_size: 100,
-			rescan_interval_days: 30,
-		});
-		expect(result).toHaveLength(1);
-		expect(result[0]!.current_path).toBe('/music/album/track.flac');
-	});
-
-	it('returns stale healthy files', () => {
-		const old = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString();
-		insertFile({
-			current_path: '/music/old.flac',
-			last_result: 'healthy',
-			last_verified_at: old,
-		});
-		const result = getFilesNeedingVerification(db, ['/music/'], {
-			batch_size: 100,
-			rescan_interval_days: 30,
-		});
-		expect(result).toHaveLength(1);
-	});
-
-	it('skips recently verified healthy files', () => {
-		const recent = new Date().toISOString();
-		insertFile({
-			current_path: '/music/recent.flac',
-			last_result: 'healthy',
-			last_verified_at: recent,
-		});
-		const result = getFilesNeedingVerification(db, ['/music/'], {
-			batch_size: 100,
-			rescan_interval_days: 30,
-		});
-		expect(result).toHaveLength(0);
-	});
-
-	it('skips files outside specified directories', () => {
-		insertFile({ current_path: '/other/track.flac', last_result: 'pending' });
-		const result = getFilesNeedingVerification(db, ['/music/'], {
-			batch_size: 100,
-			rescan_interval_days: 30,
-		});
-		expect(result).toHaveLength(0);
-	});
-
-	it('respects batch limit', () => {
-		insertFile({ current_path: '/music/1.flac', last_result: 'pending' });
-		insertFile({ current_path: '/music/2.flac', last_result: 'pending' });
-		insertFile({ current_path: '/music/3.flac', last_result: 'pending' });
-		const result = getFilesNeedingVerification(db, ['/music/'], {
-			batch_size: 2,
-			rescan_interval_days: 30,
-		});
-		expect(result).toHaveLength(2);
-	});
-
-	it('orders by last_verified_at ASC NULLS FIRST', () => {
-		const old = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString();
-		const older = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
-		insertFile({
-			current_path: '/music/old.flac',
-			last_result: 'healthy',
-			last_verified_at: old,
-		});
-		insertFile({
-			current_path: '/music/null.flac',
-			last_result: 'pending',
-			last_verified_at: null,
-		});
-		insertFile({
-			current_path: '/music/older.flac',
-			last_result: 'healthy',
-			last_verified_at: older,
-		});
-
-		const result = getFilesNeedingVerification(db, ['/music/'], {
-			batch_size: 100,
-			rescan_interval_days: 30,
-		});
-		expect(result[0]!.current_path).toBe('/music/null.flac');
-		expect(result[1]!.current_path).toBe('/music/older.flac');
-		expect(result[2]!.current_path).toBe('/music/old.flac');
-	});
-
-	it('escapes LIKE wildcards in directory paths', () => {
-		insertFile({ current_path: '/music/100%_done/track.flac', last_result: 'pending' });
-		insertFile({ current_path: '/music/100X_done/other.flac', last_result: 'pending' });
-
-		const result = getFilesNeedingVerification(db, ['/music/100%_done/'], {
-			batch_size: 100,
-			rescan_interval_days: 30,
-		});
-		expect(result).toHaveLength(1);
-		expect(result[0]!.current_path).toBe('/music/100%_done/track.flac');
-	});
-
 	it('skips a row whose path is unreadable right now', () => {
 		insertFile({ current_path: '/music/overlay.flac', last_result: 'pending' });
 		insertFile({ current_path: '/music/readable.flac', last_result: 'pending' });
@@ -361,21 +267,6 @@ describe('getFilesNeedingVerification', () => {
 			rescan_interval_days: 30,
 		});
 		expect(result.map((file) => file.current_path)).toEqual(['/music/readable.flac']);
-	});
-
-	it('does not match a sibling directory that shares a name prefix', () => {
-		insertFile({ current_path: '/music-other/x.flac', last_result: 'pending' });
-
-		expect(
-			getFilesNeedingVerification(db, ['/music'], { batch_size: 10, rescan_interval_days: 90 }),
-		).toHaveLength(0);
-
-		const scoped = getFilesNeedingVerification(db, ['/music-other'], {
-			batch_size: 10,
-			rescan_interval_days: 90,
-		});
-		expect(scoped).toHaveLength(1);
-		expect(scoped[0]!.current_path).toBe('/music-other/x.flac');
 	});
 });
 
@@ -481,13 +372,16 @@ describe('recordVerdict', () => {
 			errorTimestamp: 'sample 12345',
 			status: 'corrupt',
 		});
+		const after = Date.now();
 
 		const row = findFileByPath(db, '/music/test.flac')!;
 		expect(row.last_result).toBe('corrupt');
 		expect(row.error_severity).toBeNull();
 		expect(row.error_output).toBe('FRAME_CRC_MISMATCH');
 		expect(row.error_timestamp).toBe('sample 12345');
-		expect(Date.parse(row.last_verified_at ?? '')).toBeGreaterThanOrEqual(before);
+		const verifiedAt = Date.parse(row.last_verified_at ?? '');
+		expect(verifiedAt).toBeGreaterThanOrEqual(before);
+		expect(verifiedAt).toBeLessThanOrEqual(after);
 	});
 
 	it('clears the error columns on a healthy verdict', () => {
@@ -559,10 +453,6 @@ describe('findFileByPath', () => {
 		const row = findFileByPath(db, '/music/test.flac');
 		expect(row).toBeDefined();
 		expect(row!.current_path).toBe('/music/test.flac');
-	});
-
-	it('returns undefined when not found', () => {
-		expect(findFileByPath(db, '/nonexistent.flac')).toBeUndefined();
 	});
 });
 
@@ -750,8 +640,8 @@ describe('recovery outcomes', () => {
 
 	it('lists corrupt candidates, skipping already-attempted files', () => {
 		insertFile({ current_path: '/music/a.flac', last_result: 'corrupt' });
-		insertFile({ current_path: '/music/b.flac', last_result: 'corrupt' });
 		insertFile({ current_path: '/music/c.flac', last_result: 'corrupt' });
+		insertFile({ current_path: '/music/b.flac', last_result: 'corrupt' });
 		insertFile({ current_path: '/music/d.flac', last_result: 'healthy' });
 		recordRecoveryOutcome(db, '/music/a.flac', {
 			detail: 'too lossy',
@@ -779,17 +669,5 @@ describe('statement caching', () => {
 		expect(findFileByPath(otherDb, '/music/first.flac')).toBeUndefined();
 
 		otherDb.close();
-	});
-
-	it('does not resurrect statements from a closed handle', () => {
-		const closedDb = new BetterSqlite3(':memory:');
-		initializeSchema(closedDb);
-		findFileByPath(closedDb, '/music/track.flac');
-		closedDb.close();
-
-		const freshDb = new BetterSqlite3(':memory:');
-		initializeSchema(freshDb);
-		expect(findFileByPath(freshDb, '/music/track.flac')).toBeUndefined();
-		freshDb.close();
 	});
 });

@@ -29,9 +29,12 @@ describe('extractErrorTimestamp', () => {
 });
 
 describe('flacVerifier.verify', () => {
-	it('returns healthy when flac exits cleanly', async () => {
+	it('returns healthy when a low-priority flac -ts exits cleanly', async () => {
 		mockExecFile.mockResolvedValueOnce({ stderr: '', stdout: '' });
 		expect(await flacVerifier.verify('/music/ok.flac')).toEqual({ status: 'healthy' });
+		expect(mockExecFile.mock.calls).toEqual([
+			['nice', ['-n', '19', 'flac', '-ts', '/music/ok.flac']],
+		]);
 	});
 
 	it('returns corrupt with a sample offset on a non-zero exit', async () => {
@@ -50,16 +53,20 @@ describe('flacVerifier.verify', () => {
 			execError({ code: null, signal: 'SIGSEGV', stderr: 'boom' }),
 		);
 		const result = await flacVerifier.verify('/music/crash.flac');
-		expect(result.status).toBe('corrupt');
-		if (result.status !== 'corrupt') return;
-		expect(result.errorOutput).toContain('SIGSEGV');
-		expect(result.errorTimestamp).toBeNull();
+		expect(result).toEqual({
+			errorOutput: 'flac terminated by SIGSEGV: boom',
+			errorTimestamp: null,
+			status: 'corrupt',
+		});
 	});
 
-	it('treats a SIGINT as an interruption, not corruption', async () => {
-		mockExecFile.mockRejectedValueOnce(execError({ code: null, signal: 'SIGINT' }));
-		expect(await flacVerifier.verify('/music/x.flac')).toEqual({ status: 'interrupted' });
-	});
+	it.each(['SIGINT', 'SIGTERM'])(
+		'treats a %s as an interruption, not corruption',
+		async (signal) => {
+			mockExecFile.mockRejectedValueOnce(execError({ code: null, signal }));
+			expect(await flacVerifier.verify('/music/x.flac')).toEqual({ status: 'interrupted' });
+		},
+	);
 
 	it('rethrows a spawn-level failure so it surfaces as a tool error', async () => {
 		mockExecFile.mockRejectedValueOnce(execError({ code: 'EMFILE' }));

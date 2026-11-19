@@ -25,17 +25,21 @@ beforeEach(() => {
 describe('extractMetadata', () => {
 	it('keeps the first value of a repeated tag and matches keys case-insensitively', async () => {
 		metaflacOutputs(
-			'ARTIST=First\nartist=Second\nTitle=Song=Remix\nGENRE=Jazz\n',
+			'ARTIST=First\nartist=Second\nTitle=Song=Remix\nDate=1999\nGENRE=Jazz\n',
 			'441000\n44100\n',
 		);
 
 		expect(await extractMetadata('/music/a.flac')).toEqual({
 			album: null,
 			artist: 'First',
-			date: null,
+			date: '1999',
 			duration: 10,
 			title: 'Song=Remix',
 		});
+		expect(mockExecFile.mock.calls).toEqual([
+			['metaflac', ['--export-tags-to=-', '/music/a.flac']],
+			['metaflac', ['--show-total-samples', '--show-sample-rate', '/music/a.flac']],
+		]);
 	});
 
 	it('rounds the duration to hundredths', async () => {

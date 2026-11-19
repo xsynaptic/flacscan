@@ -72,14 +72,49 @@ const running: StopSignal = { aborted: false };
 const recoveryResult = () => findFileByPath(db, SRC)!.recovery_result;
 
 describe('attemptRecovery', () => {
-	it('does not start or record a verdict when shutting down', async () => {
+	it('places a re-encode that verified even when shutdown began during its test', async () => {
 		const item = seed();
+		const signal = { aborted: false };
+		const rename = vi.fn(() => Promise.resolve());
+		const testPasses = () => {
+			signal.aborted = true;
+			return Promise.resolve(true);
+		};
 		const result = await attemptRecovery(
-			{ config: DEFAULT_CONFIG, db, env: makeEnv({}), signal: { aborted: true } },
+			{
+				config: DEFAULT_CONFIG,
+				db,
+				env: makeEnv({ probe: probeBy(100_000, 11_800), rename, testPasses }),
+				signal,
+			},
+			item,
+		);
+
+		expect(result.kind).toBe('recovered');
+		expect(rename).toHaveBeenCalledWith(PARTIAL, DEST);
+		expect(recoveryResult()).toBe('recovered');
+	});
+
+	it('reads a rename failure during shutdown as interrupted, recording nothing', async () => {
+		const item = seed();
+		const signal = { aborted: false };
+		const unlink = vi.fn(() => Promise.resolve());
+		const rename = () => {
+			signal.aborted = true;
+			return Promise.reject(new Error('EINTR'));
+		};
+		const result = await attemptRecovery(
+			{
+				config: DEFAULT_CONFIG,
+				db,
+				env: makeEnv({ probe: probeBy(100_000, 11_800), rename, unlink }),
+				signal,
+			},
 			item,
 		);
 
 		expect(result.kind).toBe('interrupted');
+		expect(unlink).toHaveBeenCalledWith(PARTIAL);
 		expect(recoveryResult()).toBeNull();
 	});
 
@@ -113,17 +148,18 @@ describe('attemptRecovery', () => {
 		);
 
 		expect(result.kind).toBe('unsuitable');
-		expect(result.detail).toContain('metaflac could not read');
+		expect(result.detail).toBe('metaflac could not read the file: bad header');
 		expect(recoveryResult()).toBe('unsuitable');
 	});
 
 	it('records unsuitable when the stream claims zero samples', async () => {
 		const item = seed();
+		const decodeReencode = vi.fn(() => Promise.resolve());
 		const result = await attemptRecovery(
 			{
 				config: DEFAULT_CONFIG,
 				db,
-				env: makeEnv({ probe: () => Promise.resolve(fmt(0)) }),
+				env: makeEnv({ decodeReencode, probe: () => Promise.resolve(fmt(0)) }),
 				signal: running,
 			},
 			item,
@@ -131,6 +167,8 @@ describe('attemptRecovery', () => {
 
 		expect(result.kind).toBe('unsuitable');
 		expect(result.detail).toContain('unknown length');
+		expect(decodeReencode).not.toHaveBeenCalled();
+		expect(result.deliveredSamples).toBeNull();
 		expect(recoveryResult()).toBe('unsuitable');
 	});
 
@@ -237,19 +275,19 @@ describe('attemptRecovery', () => {
 			{
 				config: DEFAULT_CONFIG,
 				db,
-				env: makeEnv({ probe: probeBy(1000, 900), utimes }),
+				env: makeEnv({ probe: probeBy(100_000, 11_800), utimes }),
 				signal: running,
 			},
 			item,
 		);
 
 		expect(result.kind).toBe('recovered');
-		expect(result.note).toBe('(lost 0.0s)');
+		expect(result.note).toBe('(lost 2.0s)');
 		expect(result.warning).toBeNull();
 		expect(utimes).toHaveBeenCalledWith(DEST, 1000, 2000);
 		const row = findFileByPath(db, SRC)!;
 		expect(row.recovery_result).toBe('recovered');
-		expect(row.recovery_lost_samples).toBe(100);
+		expect(row.recovery_lost_samples).toBe(88_200);
 	});
 
 	it('recovers with a warning when metadata cannot be carried over', async () => {

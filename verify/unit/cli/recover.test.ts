@@ -53,7 +53,11 @@ describe('runRecovery disk-space preflight', () => {
 		seedCorrupt('b.flac');
 		const config = makeTestConfig(tempDir, { min_free_bytes: Number.MAX_SAFE_INTEGER });
 		const rows = getRecoveryCandidates(db);
-		await expect(runRecovery({ config, db, signal: running }, rows)).rejects.toThrow(FlacScanError);
+		const run = runRecovery({ config, db, signal: running }, rows);
+		await expect(run).rejects.toThrow(FlacScanError);
+		await expect(run).rejects.toThrow(
+			/^Disk space check failed:\n {2}volume \d+: .+ free, needs 8\.0 PiB \(short .+\)\nFree up space or lower min_free_bytes, then retry\.$/,
+		);
 
 		const written = fs.readdirSync(tempDir).filter((name) => name.includes('[Recovered]'));
 		expect(written).toEqual([]);

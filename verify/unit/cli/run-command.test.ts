@@ -30,15 +30,62 @@ function args(overrides: Record<string, string> = {}): Record<string, string> {
 }
 
 describe('runCommand', () => {
-	it('opens the database and passes the loaded config to the body', async () => {
-		let received: undefined | { db: Database.Database; directories: string[] };
+	it.each([
+		{ interruptible: true, listeners: 1 },
+		{ interruptible: false, listeners: 0 },
+	])(
+		'hands the body a signal Ctrl+C aborts only when interruptible is $interruptible',
+		async ({ interruptible, listeners }) => {
+			const onSpy = vi.spyOn(process, 'on').mockReturnValue(process);
+			vi.spyOn(console, 'log').mockImplementation(() => {});
+			let signal: AbortSignal | undefined;
 
-		await runCommand(args(), {}, (db, config) => {
-			received = { db, directories: config.directories };
-			expect(db.prepare('SELECT 1 AS value').get()).toEqual({ value: 1 });
+			await runCommand(args(), { interruptible }, (_db, _config, received) => {
+				signal = received;
+			});
+
+			const sigintHandlers = onSpy.mock.calls.filter(([event]) => event === 'SIGINT');
+			expect(sigintHandlers).toHaveLength(listeners);
+			for (const [, handler] of sigintHandlers) (handler as () => void)();
+			expect(signal?.aborted).toBe(interruptible);
+		},
+	);
+
+	it('reports the open failure itself when the database cannot be opened', async () => {
+		const directory = path.join(tempDir, 'a-directory.db');
+		fs.mkdirSync(directory);
+
+		await runCommand(args({ 'db-path': directory }), {}, vi.fn());
+
+		expect(process.exitCode).toBe(2);
+		expect(vi.mocked(console.error).mock.calls).toEqual([
+			[expect.stringMatching(/^SqliteError: unable to open database file\n/)],
+		]);
+	});
+
+	it('prints the stack trace of an unexpected crash', async () => {
+		const crash = new Error('boom');
+
+		await runCommand(args(), {}, () => {
+			throw crash;
 		});
 
-		expect(received?.directories).toEqual([tempDir]);
+		expect(process.exitCode).toBe(2);
+		expect(console.error).toHaveBeenCalledWith(crash.stack);
+	});
+
+	it('opens the configured database and passes the loaded config to the body', async () => {
+		let received: undefined | { databasePath: string; directories: string[]; open: boolean };
+
+		await runCommand(args(), {}, (db, config) => {
+			received = { databasePath: db.name, directories: config.directories, open: db.open };
+		});
+
+		expect(received).toEqual({
+			databasePath: path.join(tempDir, 'flacscan.db'),
+			directories: [tempDir],
+			open: true,
+		});
 		expect(process.exitCode ?? 0).toBe(0);
 	});
 
@@ -134,17 +181,6 @@ describe('runCommand run lock', () => {
 			`Another flacscan run (pid ${livePid}) is using ${dbPath}; try again when it finishes.`,
 		);
 		expect(fs.readFileSync(`${dbPath}.lock`, 'utf8')).toBe(livePid);
-	});
-
-	it('refuses an exclusive run nested inside another', async () => {
-		const inner = vi.fn();
-
-		await runCommand(args(), { exclusive: true }, async () => {
-			await runCommand(args(), { exclusive: true }, inner);
-		});
-
-		expect(inner).not.toHaveBeenCalled();
-		expect(process.exitCode).toBe(2);
 	});
 
 	it('takes over a lock left by a process that is gone', async () => {

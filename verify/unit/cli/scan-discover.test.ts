@@ -88,20 +88,21 @@ describe('runDiscovery', () => {
 		expect(row?.file_mtime).toBe(stat.mtime.toISOString());
 	});
 
-	it('skips an unchanged file on a second run', async () => {
-		const filePath = touch('same.flac');
-		const config = makeTestConfig(tempDir);
-
-		await runDiscovery({ config, db, signal: running }, { files: [filePath], walked: [tempDir] });
-		const firstUpdatedAt = findFileByPath(db, filePath)?.updated_at;
+	it('skips an unchanged file on a second run, keeping its verdict and acceptance', async () => {
+		const filePath = await acceptedCorrupt('same.flac', 'aaaa', 1_700_000_001);
+		const before = findFileByPath(db, filePath)!;
 
 		const stats = await runDiscovery(
-			{ config, db, signal: running },
+			{ config: makeTestConfig(tempDir), db, signal: running },
 			{ files: [filePath], walked: [tempDir] },
 		);
 
 		expect(stats.skipped).toBe(1);
-		expect(findFileByPath(db, filePath)?.updated_at).toBe(firstUpdatedAt);
+		expect(findFileByPath(db, filePath)).toMatchObject({
+			acknowledged_at: before.acknowledged_at,
+			last_result: 'corrupt',
+			last_verified_at: before.last_verified_at,
+		});
 	});
 
 	it('resets a changed file to pending and clears its recovery outcome', async () => {

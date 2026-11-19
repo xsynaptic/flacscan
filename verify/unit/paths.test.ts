@@ -39,18 +39,22 @@ describe('directoryPrefix', () => {
 });
 
 describe('statAsSpelled', () => {
-	it('is present for a file under its exact spelling, through a symlinked temp directory', () => {
-		const filePath = touch('Album', 'Track.flac');
-		const look = statAsSpelled(filePath);
-
-		expect(look.kind === 'present' && look.stats.isFile()).toBe(true);
-	});
-
 	it('is missing for a missing file and for a file under a missing directory', () => {
 		touch('Album', 'Track.flac');
 
 		expect(lookAt(tempDir, 'Album', 'Other.flac')).toBe('missing');
 		expect(lookAt(tempDir, 'Gone', 'Track.flac')).toBe('missing');
+	});
+
+	it('is missing for a path whose parent is now a file, and for a dangling symlink', () => {
+		touch('Album', 'Track.flac');
+		fs.symlinkSync(
+			path.join(tempDir, 'Album', 'Gone.flac'),
+			path.join(tempDir, 'Album', 'Dangling.flac'),
+		);
+
+		expect(lookAt(tempDir, 'Album', 'Track.flac', 'Inner.flac')).toBe('missing');
+		expect(lookAt(tempDir, 'Album', 'Dangling.flac')).toBe('missing');
 	});
 
 	it('turns missing once a file it already reported is deleted', () => {
@@ -71,10 +75,11 @@ describe('statAsSpelled', () => {
 	});
 
 	it('follows a symlinked directory under the spelling of the link', () => {
-		touch('Target', 'Track.flac');
+		const target = touch('Target', 'Track.flac');
 		fs.symlinkSync(path.join(tempDir, 'Target'), path.join(tempDir, 'Link'));
+		const look = statAsSpelled(path.join(tempDir, 'Link', 'Track.flac'));
 
-		expect(lookAt(tempDir, 'Link', 'Track.flac')).toBe('present');
+		expect(look.kind === 'present' && look.stats.ino).toBe(fs.statSync(target).ino);
 	});
 
 	it.runIf(caseInsensitiveTmp)('is missing for a case alias of the file or of a directory', () => {

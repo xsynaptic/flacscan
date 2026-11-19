@@ -6,7 +6,6 @@ import type { FileStatus } from '#database/types.ts';
 
 import { getFilesNeedingVerification } from '#database/queries.ts';
 import { initializeSchema } from '#database/schema.ts';
-import { directoryPrefix } from '#paths.ts';
 
 const segment = fc.string({
 	maxLength: 3,
@@ -19,7 +18,7 @@ const absolutePath = fc
 
 const day = 24 * 60 * 60 * 1000;
 const verifiedAt = fc
-	.constantFrom(null, 200, 100, 100, 1)
+	.constantFrom(null, 200, 100, 100, 91, 89, 1)
 	.map((daysAgo) => (daysAgo === null ? null : new Date(Date.now() - daysAgo * day).toISOString()));
 
 const fileRow = fc.record(
@@ -62,7 +61,7 @@ function byText(left: string, right: string) {
 }
 
 function isUnderARoot(filePath: string, roots: readonly string[]) {
-	return roots.some((root) => filePath.startsWith(directoryPrefix(root)));
+	return roots.some((root) => filePath.startsWith(`${root}/`));
 }
 
 describe('getFilesNeedingVerification', () => {
@@ -130,17 +129,6 @@ describe('getFilesNeedingVerification', () => {
 			).toEqual(overdueOrder);
 		},
 	);
-
-	it('leaves out a row under a root spelled in a different case', () => {
-		const db = seed([{ currentPath: '/a/a', lastResult: 'pending', lastVerifiedAt: null }]);
-		const selected = getFilesNeedingVerification(db, ['/A'], {
-			batch_size: 1000,
-			rescan_interval_days: 0,
-		}).map((row) => row.current_path);
-		db.close();
-
-		expect(selected).toEqual([]);
-	});
 
 	it('reaches both selected and filtered rows, so the agreement property is not vacuous', () => {
 		let sawSelected = false;

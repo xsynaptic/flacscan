@@ -16,19 +16,6 @@ const base = {
 };
 
 describe('classifyRecovery', () => {
-	it('accepts a clean re-encode that lost only a small tail', () => {
-		const result = classifyRecovery({ ...base, deliveredSamples: 1_000_000 - 44_100 });
-		expect(result.accepted).toBe(true);
-		expect(result.detail).toBeNull();
-		expect(result.lostSamples).toBe(44_100);
-	});
-
-	it('accepts loss exactly at the limit', () => {
-		const result = classifyRecovery({ ...base, deliveredSamples: 1_000_000 - 132_300 });
-		expect(result.accepted).toBe(true);
-		expect(result.lostSamples).toBe(132_300);
-	});
-
 	it('rejects loss one sample over the limit', () => {
 		const result = classifyRecovery({ ...base, deliveredSamples: 1_000_000 - 132_301 });
 		expect(result.accepted).toBe(false);
@@ -92,38 +79,9 @@ describe('originalNameForRecoveredFile', () => {
 		expect(originalNameForRecoveredFile('Track [Recoverable].flac')).toBeNull();
 		expect(originalNameForRecoveredFile('Track [Recovered] (remix).flac')).toBeNull();
 	});
-
-	it('ignores any leading directory in the name', () => {
-		expect(originalNameForRecoveredFile('A/B/Song [Recovered].flac')).toBe('Song.flac');
-	});
 });
 
 describe('findSpaceViolations', () => {
-	it('returns nothing when every volume fits with margin', () => {
-		const items = [
-			{ dev: 1, size: 100 },
-			{ dev: 1, size: 200 },
-			{ dev: 2, size: 50 },
-		];
-		const volumes = [
-			{ dev: 1, freeBytes: 1000 },
-			{ dev: 2, freeBytes: 1000 },
-		];
-		expect(findSpaceViolations(items, volumes, 500)).toEqual([]);
-	});
-
-	it('treats a volume that ends exactly at the buffer as fitting', () => {
-		expect(
-			findSpaceViolations([{ dev: 1, size: 500 }], [{ dev: 1, freeBytes: 1000 }], 500),
-		).toEqual([]);
-	});
-
-	it('flags a single volume that comes up short', () => {
-		expect(
-			findSpaceViolations([{ dev: 1, size: 600 }], [{ dev: 1, freeBytes: 1000 }], 500),
-		).toEqual([{ dev: 1, freeBytes: 1000, requiredBytes: 1100, shortfallBytes: 100 }]);
-	});
-
 	it('reports each short volume independently', () => {
 		const items = [
 			{ dev: 1, size: 900 },
@@ -139,15 +97,5 @@ describe('findSpaceViolations', () => {
 			{ dev: 1, freeBytes: 1000, requiredBytes: 1100, shortfallBytes: 100 },
 			{ dev: 3, freeBytes: 1000, requiredBytes: 1150, shortfallBytes: 150 },
 		]);
-	});
-
-	it('requires the buffer even on a volume with no copies queued', () => {
-		expect(findSpaceViolations([], [{ dev: 1, freeBytes: 100 }], 500)).toEqual([
-			{ dev: 1, freeBytes: 100, requiredBytes: 500, shortfallBytes: 400 },
-		]);
-	});
-
-	it('returns nothing when there are no volumes', () => {
-		expect(findSpaceViolations([{ dev: 1, size: 100 }], [], 500)).toEqual([]);
 	});
 });

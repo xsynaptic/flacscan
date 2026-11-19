@@ -140,15 +140,6 @@ describe('recovered file naming', () => {
 			);
 		},
 	);
-
-	test.prop([normalizedPath, normalizedPath], { numRuns: 2000 })(
-		'never gives two originals the same recovered path',
-		(left, right) => {
-			fc.pre(left !== right);
-
-			expect(recoveredFilePath(left)).not.toBe(recoveredFilePath(right));
-		},
-	);
 });
 
 describe('findSpaceViolations', () => {

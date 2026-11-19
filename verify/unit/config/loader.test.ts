@@ -23,7 +23,8 @@ function writeConfig(dir: string, yaml: string): string {
 }
 
 describe('loadConfig', () => {
-	it('maps every field from a valid config file', () => {
+	it('maps every field from a valid config file, warning about none', () => {
+		const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 		const config = writeConfig(
 			tempDir,
 			[
@@ -35,22 +36,25 @@ describe('loadConfig', () => {
 				'min_free_bytes: 2048',
 				'recover_max_trailing_loss_seconds: 1.5',
 				'fix: true',
+				'notify: true',
 				'db_path: /tmp/db.sqlite',
 				'log_path: /tmp/scan.log',
 			].join('\n'),
 		);
 
-		const result = loadConfig({ config });
-
-		expect(result.directories).toEqual(['/Volumes/Music']);
-		expect(result.batch_size).toBe(50);
-		expect(result.parallelism).toBe(4);
-		expect(result.rescan_interval_days).toBe(30);
-		expect(result.min_free_bytes).toBe(2048);
-		expect(result.recover_max_trailing_loss_seconds).toBe(1.5);
-		expect(result.fix).toBe(true);
-		expect(result.db_path).toBe('/tmp/db.sqlite');
-		expect(result.log_path).toBe('/tmp/scan.log');
+		expect(loadConfig({ config })).toEqual({
+			batch_size: 50,
+			db_path: '/tmp/db.sqlite',
+			directories: ['/Volumes/Music'],
+			fix: true,
+			log_path: '/tmp/scan.log',
+			min_free_bytes: 2048,
+			notify: true,
+			parallelism: 4,
+			recover_max_trailing_loss_seconds: 1.5,
+			rescan_interval_days: 30,
+		});
+		expect(warnSpy).not.toHaveBeenCalled();
 	});
 
 	it('expands a tilde in YAML directories (headline regression)', () => {
@@ -93,12 +97,6 @@ describe('loadConfig', () => {
 		expect(() => loadConfig({ config })).toThrow(/fix/);
 	});
 
-	it('accepts fix: true from the file', () => {
-		const config = writeConfig(tempDir, 'directories:\n  - /m\nfix: true');
-
-		expect(loadConfig({ config }).fix).toBe(true);
-	});
-
 	it('lets CLI fix override file fix: false', () => {
 		const config = writeConfig(tempDir, 'directories:\n  - /m\nfix: false');
 
@@ -109,12 +107,6 @@ describe('loadConfig', () => {
 		const config = writeConfig(tempDir, 'directories:\n  - /m');
 
 		expect(loadConfig({ config }).notify).toBe(false);
-	});
-
-	it('accepts notify: true from the file', () => {
-		const config = writeConfig(tempDir, 'directories:\n  - /m\nnotify: true');
-
-		expect(loadConfig({ config }).notify).toBe(true);
 	});
 
 	it('throws when notify is a non-boolean', () => {
@@ -157,8 +149,18 @@ describe('loadConfig', () => {
 			directory: '/Volumes/Music',
 		});
 
-		expect(result.directories).toEqual(['/Volumes/Music']);
-		expect(result.batch_size).toBe(100);
+		expect(result).toEqual({
+			batch_size: 100,
+			db_path: path.join(os.homedir(), '.flacscan/flacscan.db'),
+			directories: ['/Volumes/Music'],
+			fix: false,
+			log_path: path.join(os.homedir(), '.flacscan/flacscan.log'),
+			min_free_bytes: 1_073_741_824,
+			notify: false,
+			parallelism: 1,
+			recover_max_trailing_loss_seconds: 3,
+			rescan_interval_days: 90,
+		});
 	});
 
 	it('throws when no directories are configured and none passed', () => {
@@ -178,6 +180,12 @@ describe('loadConfig', () => {
 		['directories:\n  - /m\nnotify: 1', 'notify', 'true or false'],
 		['directories:\n  - /m\nlog_path: 3', 'log_path', 'a string'],
 		['directories:\n  - /m\nparallelism: ~', 'parallelism', 'a positive integer'],
+		['directories:\n  - /m\nbatch_size: 0', 'batch_size', 'a positive integer'],
+		[
+			'directories:\n  - /m\nrecover_max_trailing_loss_seconds: .inf',
+			'recover_max_trailing_loss_seconds',
+			'a positive number',
+		],
 	])('rejects an invalid %s with its expectation', (yaml, key, expected) => {
 		const config = writeConfig(tempDir, yaml);
 
@@ -206,6 +214,12 @@ describe('loadConfig', () => {
 
 	it.each([
 		[{ 'batch-size': '2.5' }, 'Invalid value for batch-size: "2.5" (must be a positive integer)'],
+		[{ 'batch-size': '0' }, 'Invalid value for batch-size: "0" (must be a positive integer)'],
+		[{ parallelism: 'x' }, 'Invalid value for parallelism: "x" (must be a positive integer)'],
+		[
+			{ 'max-trailing-loss': '0' },
+			'Invalid value for max-trailing-loss: "0" (must be a positive number)',
+		],
 		[
 			{ 'max-trailing-loss': '-1' },
 			'Invalid value for max-trailing-loss: "-1" (must be a positive number)',
@@ -222,5 +236,45 @@ describe('loadConfig', () => {
 		const result = loadConfig({ 'batch-size': '200', config });
 
 		expect(result.batch_size).toBe(200);
+	});
+
+	it('applies the --log-path, --min-free-bytes and --rescan-days overrides', () => {
+		const config = writeConfig(tempDir, 'directories:\n  - /m\nlog_path: /tmp/file.log');
+
+		expect(
+			loadConfig({ config, 'log-path': '~/cli.log', 'min-free-bytes': '5', 'rescan-days': '7' }),
+		).toMatchObject({
+			log_path: path.join(os.homedir(), 'cli.log'),
+			min_free_bytes: 5,
+			rescan_interval_days: 7,
+		});
+	});
+
+	it('treats an empty config file as no settings', () => {
+		const config = writeConfig(tempDir, '');
+
+		expect(loadConfig({ config, directory: '/m' }).batch_size).toBe(100);
+	});
+
+	it('looks for an explicit path, then ./flacscan.config.yaml, then ~/.flacscan', () => {
+		const home = path.join(tempDir, 'home');
+		const cwd = path.join(tempDir, 'cwd');
+		fs.mkdirSync(path.join(home, '.flacscan'), { recursive: true });
+		fs.mkdirSync(cwd);
+		writeConfig(path.join(home, '.flacscan'), 'directories:\n  - /from-home');
+		const cwdConfig = writeConfig(cwd, 'directories:\n  - /from-cwd');
+		const explicit = path.join(tempDir, 'explicit.yaml');
+		fs.writeFileSync(explicit, 'directories:\n  - /explicit');
+		vi.spyOn(os, 'homedir').mockReturnValue(home);
+		const original = process.cwd();
+		process.chdir(cwd);
+		try {
+			expect(loadConfig({ config: explicit }).directories).toEqual(['/explicit']);
+			expect(loadConfig({}).directories).toEqual(['/from-cwd']);
+			fs.rmSync(cwdConfig);
+			expect(loadConfig({}).directories).toEqual(['/from-home']);
+		} finally {
+			process.chdir(original);
+		}
 	});
 });

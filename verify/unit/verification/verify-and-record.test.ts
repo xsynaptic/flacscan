@@ -162,29 +162,30 @@ describe('verifyAndRecord', () => {
 		expect(findFileByPath(db, PATH)!.artist).toBeNull();
 	});
 
-	it('returns fixed when a strip makes the file pass', async () => {
-		const tmp = path.join(os.tmpdir(), `flacscan-fixed-${String(process.pid)}.flac`);
-		fs.writeFileSync(tmp, 'data');
-		try {
-			const file = seed(tmp);
-			const outcome = await verifyAndRecord(
-				{
-					db,
-					fix: true,
-					logPath,
-					signal: running,
-					verifier: makeVerifier({ detect: true, verify: [corrupt('ID3'), { status: 'healthy' }] }),
-				},
-				file,
-			);
+	it('returns fixed and records the rewritten identity when a strip makes the file pass', async () => {
+		const filePath = path.join(logDir, 'fixed.flac');
+		fs.writeFileSync(filePath, 'ID3 data');
+		const file = seed(filePath);
+		const verifier = makeVerifier({
+			detect: true,
+			verify: [corrupt('ID3'), { status: 'healthy' }],
+		});
+		const fixer = {
+			...verifier.fixer!,
+			fix: () => {
+				fs.writeFileSync(filePath, 'data');
+				return Promise.resolve({ ok: true });
+			},
+		};
 
-			expect(outcome).toEqual({ kind: 'fixed', label: 'ID3' });
-			const row = findFileByPath(db, tmp)!;
-			expect(row.last_result).toBe('healthy');
-			expect(row.file_size).toBe(fs.statSync(tmp).size);
-		} finally {
-			fs.unlinkSync(tmp);
-		}
+		const outcome = await verifyAndRecord(
+			{ db, fix: true, logPath, signal: running, verifier: { ...verifier, fixer } },
+			file,
+		);
+
+		expect(outcome).toEqual({ kind: 'fixed', label: 'ID3' });
+		expect(findFileByPath(db, filePath)).toMatchObject({ file_size: 4, last_result: 'healthy' });
+		expect(logEntries()).toMatchObject([{ event: 'id3_fixed', path: filePath }]);
 	});
 
 	it('clears the recovery outcome of a file a fix rewrites', async () => {
