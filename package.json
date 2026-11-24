@@ -1,13 +1,16 @@
 {
 	"name": "flacscan",
 	"version": "4.3.1",
-	"description": "Periodic integrity verification for large FLAC collections",
+	"description": "CLI for periodic integrity checks on large FLAC collections: scans in batches, logs only problems, and runs unattended under cron or launchd",
 	"keywords": [
 		"flac",
 		"bitrot",
 		"integrity",
+		"data-integrity",
 		"audio",
-		"cli"
+		"music-library",
+		"cli",
+		"launchd"
 	],
 	"type": "module",
 	"imports": {
